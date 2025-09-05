@@ -25,7 +25,7 @@ impl SocketContext {
     fn new() -> Self {
         use leptos::server::codee::string::JsonSerdeCodec;
         use leptos_use::{
-            use_websocket_with_options, ReconnectLimit, UseWebSocketOptions, UseWebSocketReturn,
+            ReconnectLimit, UseWebSocketOptions, UseWebSocketReturn, use_websocket_with_options,
         };
 
         let UseWebSocketReturn {
