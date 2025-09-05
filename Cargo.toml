@@ -2,6 +2,14 @@
 name = "leptos-axum-socket"
 version = "0.1.0"
 edition = "2024"
+authors = ["Marc-Stefan Cassola"]
+categories = ["gui", "web-programming", "wasm"]
+description = "Realtime pub/sub communication for Leptos + Axum applications."
+exclude = ["examples/", "tests/"]
+keywords = ["leptos", "pubsub", "websocket", "communication"]
+license = "MIT OR Apache-2.0"
+readme = "README.md"
+repository = "https://github.com/Synphonyte/leptos-axum-socket"
 
 [lib]
 crate-type = ["cdylib", "rlib"]
@@ -15,14 +23,10 @@ leptos-use = { version = "0.16.2", default-features = false, features = [
     "use_websocket",
 ] }
 leptos_axum = { version = "0.8.0", optional = true }
-leptos_meta = { version = "0.8.0" }
-leptos_router = { version = "0.8.0" }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 tokio = { version = "1", features = ["rt-multi-thread"], optional = true }
 tracing = "0.1.41"
-urlencoding = "2"
-wasm-bindgen = { version = "=0.2.100", optional = true }
 
 [features]
 ssr = [
@@ -30,8 +34,6 @@ ssr = [
     "dep:tokio",
     "dep:leptos_axum",
     "leptos/ssr",
-    "leptos_meta/ssr",
-    "leptos_router/ssr",
     "leptos-use/ssr",
     "leptos-use/axum",
 ]
