@@ -114,6 +114,7 @@ state.server_socket.add_permission_filter(|key: MyKey, _ctx: &()| {
     }
 });
 
+// Init the Axum app
 let app = Router::new()
     .leptos_routes(&state, routes, {
         use basic::app::shell;
@@ -121,7 +122,7 @@ let app = Router::new()
         let leptos_options = state.leptos_options.clone();
         move || shell(leptos_options.clone())
     })
-    .socket_route(connect_to_websocket)    // Register the socket route
+    .socket_route(connect_to_websocket)    // Register the socket route (implementation below)
     .fallback(leptos_axum::file_and_error_handler::<AppState, _>(shell))
     .with_state(state);    // Register the state
 ```
@@ -143,7 +144,7 @@ pub async fn connect_to_websocket(
 }
 ```
 
-And finally in your root Leptos component:
+And finally provide the context in your root Leptos component:
 
 ```rust
 #[component]
