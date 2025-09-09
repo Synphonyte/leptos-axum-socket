@@ -21,6 +21,7 @@ pub struct SocketContext {
     pub(crate) close: SimpleFn,
     pub(crate) message: Signal<Option<ChannelMsg>>,
     effect_stops: StoredValue<HashMap<Value, Box<dyn Fn() + Send + Sync + 'static>>>,
+    subscribers: StoredValue<HashMap<Value, Arc<dyn Fn() + Send + Sync>>>,
 }
 
 // #[cfg(not(feature = "ssr"))]
@@ -62,24 +63,30 @@ impl SocketContext {
             open: StoredValue::new(Arc::new(open)),
             close: StoredValue::new(Arc::new(close)),
             effect_stops: StoredValue::new(HashMap::new()),
+            subscribers: StoredValue::new(HashMap::new()),
         }
     }
 
     /// Disconnects and re-connects the WebSocket. This helps if you want to reset the context on the server.
-    /// For example, you can use this method to reset the context when the user logs out.
-    ///
-    /// Please note that all subscriptions will be lost when this is called.
+    /// For example, you can use this method to update the websocket handler context when the user logs out or in.
     pub fn reconnect(&self) {
-        for (_, stop) in self.effect_stops.write_value().drain() {
-            stop();
-        }
+        #[cfg(not(feature = "ssr"))]
+        {
+            for (_, stop) in self.effect_stops.write_value().drain() {
+                stop();
+            }
 
-        self.close.get_value()();
-        self.open.get_value()();
+            self.close.get_value()();
+            self.open.get_value()();
+
+            for (key, subscriber) in &*self.subscribers.read_value() {
+                self.subscribe_effect(key.clone(), Arc::clone(subscriber));
+            }
+        }
     }
 
     /// When someone sends a message with the given key, the handler will be called.
-    pub fn subscribe<Msg>(self, key_value: Msg::Key, handler: impl Fn(&Msg) + 'static)
+    pub fn subscribe<Msg>(self, key_value: Msg::Key, handler: impl Fn(&Msg) + Send + Sync + 'static)
     where
         Msg: SocketMsg + serde::Serialize + Clone,
         for<'de> Msg: serde::Deserialize<'de>,
@@ -100,30 +107,10 @@ impl SocketContext {
                 })
                 .unwrap();
 
-            Effect::new({
+            let handler = {
                 let key_value = key_value.clone();
 
-                move || {
-                    if self.ready_state.get() == ConnectionReadyState::Open {
-                        self.send.get_value()(&ChannelMsg::Subscribe {
-                            key: key_value.clone(),
-                        });
-                    }
-                }
-            });
-
-            on_cleanup({
-                let key_value = key_value.clone();
-
-                move || {
-                    self.unsubscribe(key_value);
-                }
-            });
-
-            let effect = Effect::new({
-                let key_value = key_value.clone();
-
-                move || {
+                Arc::new(move || {
                     if let Some(msg) = self.message.read().as_ref() {
                         match msg {
                             ChannelMsg::Msg { msg, key } if &key_value == key => {
@@ -142,13 +129,43 @@ impl SocketContext {
                             _ => (),
                         }
                     }
-                }
-            });
+                }) as Arc<dyn Fn() + Send + Sync>
+            };
 
-            self.effect_stops
+            self.subscribers
                 .write_value()
-                .insert(key_value, Box::new(move || effect.stop()));
+                .insert(key_value.clone(), Arc::clone(&handler));
+            self.subscribe_effect(key_value, handler);
         }
+    }
+
+    #[cfg(not(feature = "ssr"))]
+    fn subscribe_effect(self, key_value: Value, handler: Arc<dyn Fn() + Send + Sync>) {
+        Effect::new({
+            let key_value = key_value.clone();
+
+            move || {
+                if self.ready_state.get() == ConnectionReadyState::Open {
+                    self.send.get_value()(&ChannelMsg::Subscribe {
+                        key: key_value.clone(),
+                    });
+                }
+            }
+        });
+
+        on_cleanup({
+            let key_value = key_value.clone();
+
+            move || {
+                self.unsubscribe(key_value);
+            }
+        });
+
+        let effect = Effect::new(move || handler());
+
+        self.effect_stops
+            .write_value()
+            .insert(key_value, Box::new(move || effect.stop()));
     }
 
     /// Stop listening for messages with the given key.
@@ -234,4 +251,10 @@ pub fn provide_socket_context_with_query<T: Serialize + ?Sized>(query: &T) {
 #[inline(always)]
 pub fn expect_socket_context() -> SocketContext {
     expect_context()
+}
+
+/// Call this when you want to subscribe or send a message in your component.
+#[inline(always)]
+pub fn use_socket_context() -> Option<SocketContext> {
+    use_context()
 }
