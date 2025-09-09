@@ -24,8 +24,8 @@ pub struct SocketCtx {
 #[axum::debug_handler(state = AppState)]
 pub async fn connect_to_websocket(
     ws: WebSocketUpgrade,
-    State(state): State<AppState>,
-    // State(allowed_users): State<AllowedUsers>,
+    State(socket): State<ServerSocket>,
+    State(allowed_users): State<AllowedUsers>,
     Query(Q { user_id }): Query<Q>,
 ) -> Response {
     debug!("User {} connected", user_id);
@@ -33,10 +33,10 @@ pub async fn connect_to_websocket(
     ws.on_upgrade(move |websocket| {
         leptos_axum_socket::handlers::handle_websocket_with_context(
             websocket,
-            state.server_socket,
+            socket,
             SocketCtx {
                 user_id,
-                allowed_users: state.allowed_users,
+                allowed_users,
             },
         )
     })
