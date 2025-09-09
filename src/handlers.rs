@@ -5,7 +5,7 @@ use futures_util::{SinkExt, StreamExt, stream::SplitSink};
 use tokio::sync::{Mutex, broadcast::Receiver};
 use tracing::debug;
 
-use crate::channel::{ChannelMsg, ServerSocket};
+use crate::{ChannelMsg, ServerSocket};
 
 /// Use this to handle the incoming WebSocket connection. This is a shortcut for `handle_websocket_with_context` with an empty `()` context.
 ///
@@ -54,11 +54,13 @@ where
             Message::Text(text) => {
                 debug!("Received Text: {text}");
 
+                let mut socket = socket.lock();
+
                 let msg: ChannelMsg = serde_json::from_str(text.as_str()).unwrap();
 
                 match msg {
                     ChannelMsg::Subscribe { key } => {
-                        if socket.get_permission(key.clone(), &context).can_subscribe() {
+                        if socket.can_subscribe(key.clone(), &context) {
                             let ws_tx = Arc::clone(&ws_tx);
                             let broadcast_rx = socket.subscribe(key.clone());
 
@@ -73,7 +75,7 @@ where
                         socket.unsubscribe(key);
                     }
                     ChannelMsg::Msg { msg, key } => {
-                        if socket.get_permission(key.clone(), &context).can_send() {
+                        if let Some(msg) = socket.map_msg(key.clone(), msg.clone(), &context) {
                             socket.send(key, msg);
                         }
                     }

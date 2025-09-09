@@ -223,6 +223,9 @@ where
         T: 'static,
     {
         use axum::routing::get;
+        use tracing::debug;
+
+        debug!("Adding websocket route to {WEBSOCKET_CHANNEL_URL}");
 
         self.route(WEBSOCKET_CHANNEL_URL, get(handler))
     }

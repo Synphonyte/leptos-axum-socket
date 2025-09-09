@@ -9,9 +9,9 @@ mod server;
 pub use context::*;
 use serde_json::Value;
 #[cfg(feature = "ssr")]
-pub use server::{ServerSocket, send};
+pub use server::{ServerSocket, ServerSocketInner, send};
 
-pub const WEBSOCKET_CHANNEL_URL: &str = "/channel-msg";
+pub const WEBSOCKET_CHANNEL_URL: &str = "/socket-msg";
 
 #[derive(Debug, Serialize, Deserialize, Clone)]
 pub(crate) enum ChannelMsg {

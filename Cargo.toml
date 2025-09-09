@@ -1,6 +1,6 @@
 [package]
 name = "leptos-axum-socket"
-version = "0.1.0"
+version = "0.2.0"
 edition = "2024"
 authors = ["Marc-Stefan Cassola"]
 categories = ["gui", "web-programming", "wasm"]
@@ -25,6 +25,7 @@ leptos-use = { version = "0.16.2", default-features = false, features = [
 leptos_axum = { version = "0.8.0", optional = true }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
+serde_urlencoded = "0.7.1"
 tokio = { version = "1", features = ["rt-multi-thread"], optional = true }
 tracing = "0.1.41"
 

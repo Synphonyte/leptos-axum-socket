@@ -1,7 +1,9 @@
-use std::sync::Arc;
+use std::{collections::HashMap, sync::Arc};
 
 use leptos::prelude::*;
 use leptos_use::core::ConnectionReadyState;
+use serde::Serialize;
+use serde_json::Value;
 
 use crate::{ChannelMsg, SocketMsg};
 
@@ -18,15 +20,24 @@ pub struct SocketContext {
     pub(crate) open: SimpleFn,
     pub(crate) close: SimpleFn,
     pub(crate) message: Signal<Option<ChannelMsg>>,
+    effect_stops: StoredValue<HashMap<Value, Box<dyn Fn() + Send + Sync + 'static>>>,
 }
 
 // #[cfg(not(feature = "ssr"))]
 impl SocketContext {
-    fn new() -> Self {
+    fn new(query: String) -> Self {
+        use crate::WEBSOCKET_CHANNEL_URL;
         use leptos::server::codee::string::JsonSerdeCodec;
         use leptos_use::{
             ReconnectLimit, UseWebSocketOptions, UseWebSocketReturn, use_websocket_with_options,
         };
+
+        let query = if query.is_empty() {
+            String::new()
+        } else {
+            format!("?{query}")
+        };
+        let url = format!("{WEBSOCKET_CHANNEL_URL}{query}");
 
         let UseWebSocketReturn {
             message,
@@ -36,7 +47,7 @@ impl SocketContext {
             close,
             ..
         } = use_websocket_with_options::<ChannelMsg, ChannelMsg, JsonSerdeCodec, _, _>(
-            crate::WEBSOCKET_CHANNEL_URL,
+            &url,
             UseWebSocketOptions::default()
                 .reconnect_limit(ReconnectLimit::Infinite)
                 .on_error(|error| {
@@ -50,12 +61,19 @@ impl SocketContext {
             ready_state,
             open: StoredValue::new(Arc::new(open)),
             close: StoredValue::new(Arc::new(close)),
+            effect_stops: StoredValue::new(HashMap::new()),
         }
     }
 
     /// Disconnects and re-connects the WebSocket. This helps if you want to reset the context on the server.
     /// For example, you can use this method to reset the context when the user logs out.
+    ///
+    /// Please note that all subscriptions will be lost when this is called.
     pub fn reconnect(&self) {
+        for (_, stop) in self.effect_stops.write_value().drain() {
+            stop();
+        }
+
         self.close.get_value()();
         self.open.get_value()();
     }
@@ -102,26 +120,34 @@ impl SocketContext {
                 }
             });
 
-            Effect::new(move || {
-                if let Some(msg) = self.message.read().as_ref() {
-                    match msg {
-                        ChannelMsg::Msg { msg, key } if &key_value == key => {
-                            match serde_json::from_value(msg.clone()) {
-                                Err(err) => {
-                                    leptos::logging::error!(
-                                        "Failed to deserialize message: {}",
-                                        err
-                                    );
-                                }
-                                Ok(msg) => {
-                                    handler(&msg);
+            let effect = Effect::new({
+                let key_value = key_value.clone();
+
+                move || {
+                    if let Some(msg) = self.message.read().as_ref() {
+                        match msg {
+                            ChannelMsg::Msg { msg, key } if &key_value == key => {
+                                match serde_json::from_value(msg.clone()) {
+                                    Err(err) => {
+                                        leptos::logging::error!(
+                                            "Failed to deserialize message: {}",
+                                            err
+                                        );
+                                    }
+                                    Ok(msg) => {
+                                        handler(&msg);
+                                    }
                                 }
                             }
+                            _ => (),
                         }
-                        _ => (),
                     }
                 }
             });
+
+            self.effect_stops
+                .write_value()
+                .insert(key_value, Box::new(move || effect.stop()));
         }
     }
 
@@ -142,6 +168,8 @@ impl SocketContext {
                     leptos::logging::error!("Failed to serialize key: {}", err);
                 })
                 .unwrap();
+
+            self.effect_stops.write_value().remove(&key_value);
 
             self.send.get_value()(&ChannelMsg::Unsubscribe { key: key_value });
         }
@@ -186,7 +214,20 @@ impl SocketContext {
 /// Call this in your root component to provide the socket context.
 #[inline(always)]
 pub fn provide_socket_context() {
-    provide_context(SocketContext::new());
+    provide_context(SocketContext::new("".to_string()));
+}
+
+/// Call this in your root component to provide the socket context.
+///
+/// ## Example
+///
+/// ```ignore
+/// provide_socket_context_with_query(&[("user_id", "123456789")]);
+/// ```
+#[inline(always)]
+pub fn provide_socket_context_with_query<T: Serialize + ?Sized>(query: &T) {
+    let query_string = serde_urlencoded::to_string(query).expect("Failed to serialize query");
+    provide_context(SocketContext::new(query_string));
 }
 
 /// Call this when you want to subscribe or send a message in your component.
