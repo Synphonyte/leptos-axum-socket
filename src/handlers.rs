@@ -1,4 +1,4 @@
-use std::sync::Arc;
+use std::{collections::HashSet, sync::Arc};
 
 use axum::{
     extract::{
@@ -16,6 +16,8 @@ use tracing::debug;
 use uuid::Uuid;
 
 use crate::{ChannelMsg, ServerSocket};
+
+const MAX_SUBSCRIPTIONS: usize = 10000;
 
 async fn handle_websocket_with_context<C>(
     ws: WebSocket,
@@ -38,16 +40,21 @@ async fn handle_websocket_with_context<C>(
 
     tokio::spawn({
         let ws_tx = Arc::clone(&ws_tx);
+        let socket = socket.clone();
 
         async move {
             recv_client_send(ws_tx, client_rx).await;
+            // Cleanup on disconnect
+            socket.lock().await.remove_client_sender(client_id);
         }
     });
+
+    let mut subscribed_keys = HashSet::new();
 
     while let Some(Ok(msg)) = ws_rx.next().await {
         match msg {
             Message::Close(_) => {
-                return;
+                break;
             }
             Message::Text(text) => {
                 debug!("Received Text: {text}");
@@ -58,7 +65,7 @@ async fn handle_websocket_with_context<C>(
 
                 match msg {
                     ChannelMsg::Subscribe { key } => {
-                        if socket.can_subscribe(key.clone(), &context) {
+                        if socket.can_subscribe(key.clone(), &context) && subscribed_keys.len() < MAX_SUBSCRIPTIONS {
                             let ws_tx = Arc::clone(&ws_tx);
                             let broadcast_rx = socket.subscribe(key.clone());
 
@@ -66,11 +73,13 @@ async fn handle_websocket_with_context<C>(
                                 recv_broadcast(Arc::clone(&ws_tx), broadcast_rx).await;
                             });
 
-                            socket.remember_handle(key, handle);
+                            subscribed_keys.insert(key.clone());
+                            socket.remember_handle(client_id, key, handle);
                         }
                     }
                     ChannelMsg::Unsubscribe { key } => {
-                        socket.unsubscribe(key);
+                        subscribed_keys.remove(&key);
+                        socket.unsubscribe(client_id, key);
                     }
                     ChannelMsg::Msg { msg, key } => {
                         if let Some(msg) = socket.map_msg(key.clone(), msg.clone(), &context) {
@@ -81,6 +90,13 @@ async fn handle_websocket_with_context<C>(
             }
             _ => (),
         }
+    }
+
+    // Cleanup on disconnect
+    let mut socket = socket.lock().await;
+    socket.remove_client_sender(client_id);
+    for key in subscribed_keys {
+        socket.unsubscribe(client_id, key);
     }
 }
 

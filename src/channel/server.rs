@@ -42,7 +42,7 @@ pub struct ServerSocketInner {
     client_to_sender: HashMap<Uuid, mpsc::Sender<ChannelMsg>>,
     subscribe_filters: Vec<SubscribeFilterFn>,
     send_mappers: Vec<SendMapFn>,
-    handles: HashMap<Value, JoinHandle<()>>,
+    handles: HashMap<(Uuid, Value), JoinHandle<()>>,
 }
 
 impl std::fmt::Debug for ServerSocketInner {
@@ -98,17 +98,21 @@ impl ServerSocketInner {
         self.client_to_sender.insert(client_id, sender);
     }
 
+    pub(crate) fn remove_client_sender(&mut self, client_id: Uuid) {
+        self.client_to_sender.remove(&client_id);
+    }
+
     #[instrument]
     pub(crate) fn subscribe(&mut self, key: Value) -> Receiver<ChannelMsg> {
         self.sender(key).subscribe()
     }
 
-    pub(crate) fn remember_handle(&mut self, key: Value, handle: JoinHandle<()>) {
-        self.handles.insert(key, handle);
+    pub(crate) fn remember_handle(&mut self, client_id: Uuid, key: Value, handle: JoinHandle<()>) {
+        self.handles.insert((client_id, key), handle);
     }
 
-    pub(crate) fn unsubscribe(&mut self, key: Value) {
-        if let Some(handle) = self.handles.remove(&key) {
+    pub(crate) fn unsubscribe(&mut self, client_id: Uuid, key: Value) {
+        if let Some(handle) = self.handles.remove(&(client_id, key)) {
             handle.abort();
         }
     }
