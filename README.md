@@ -13,7 +13,7 @@ Realtime pub/sub communication for Leptos + Axum applications.
 
 ```rust
 // Define the key and message types
-#[derive(Clone, Serialize, Deserialize)]
+#[derive(Clone, Serialize, Deserialize, PartialEq, Eq, Hash, Debug)]
 pub struct MyKey {
     pub bla: String,
 }
@@ -70,7 +70,7 @@ pub async fn my_server_function() -> Result<(), ServerFnError> {
        &MyMsg {
            awesome_msg: "Hello, world!".to_string(),
        },
-    );
+    ).await;
 
     Ok(())
 }
@@ -103,16 +103,20 @@ let state = AppState {
     server_socket: ServerSocket::new(),
 };
 
-// Optional: add permissions filters
-state.server_socket.add_permission_filter(|key: MyKey, _ctx: &()| {
-    if key.bla == "bla" {
-        SocketPermission::Allow
-    } else if key.bla == "bla2" {
-        SocketPermission::ReadOnly
-    } else {
-        SocketPermission::Deny
-    }
-});
+// Optional: add subscription filters and message mappers
+{
+    let mut server_socket = state.server_socket.lock().await;
+    server_socket.add_subscribe_filter(|key: MyKey, _ctx: &()| { key.bla == "bla" });
+    server_socket.add_send_mapper(|key: MyKey, msg: MyMsg, _ctx: &()| {
+        if key.bla == "bla" {
+            Some(MyMsg {
+                awesome_msg: msg.awesome_msg.replace("old", "new"),
+            })
+        } else {
+            None
+        }
+    });
+}
 
 // Init the Axum app
 let app = Router::new()
@@ -140,7 +144,7 @@ pub async fn connect_to_websocket(
     // Provide extra context like the user's ID for example that is passed to the permission filters
     let ctx = ();
 
-    ws.on_upgrade(|websocket| leptos_axum_socket::handlers::handle_websocket_with_context(websocket, socket, ctx))
+    upgrade_websocket( ws, socket, ctx)
 }
 ```
 
