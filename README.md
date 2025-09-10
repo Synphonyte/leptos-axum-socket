@@ -97,43 +97,51 @@ pub struct AppState {
 Initialize your Axum app (probably in main.rs):
 
 ```rust
-// Construct the Axum app state
-let state = AppState {
-    leptos_options: conf.leptos_options,
-    server_socket: ServerSocket::new(),
-};
+#[tokio::main]
+async fn main() {
+    let conf = get_configuration(None).unwrap();
+    let addr = conf.leptos_options.site_addr;
 
-// Optional: add subscription filters and message mappers
-{
-    let mut server_socket = state.server_socket.lock().await;
-    server_socket.add_subscribe_filter(|key: MyKey, _ctx: &()| { key.bla == "bla" });
-    server_socket.add_send_mapper(|key: MyKey, msg: MyMsg, _ctx: &()| {
-        if key.bla == "bla" {
-            Some(MyMsg {
-                awesome_msg: msg.awesome_msg.replace("old", "new"),
-            })
-        } else {
-            None
-        }
-    });
+    let routes = generate_route_list(App);
+
+    // Construct the Axum app state
+    let state = AppState {
+        leptos_options: conf.leptos_options,
+        server_socket: ServerSocket::new(),
+    };
+
+    // Optional: add subscription filters and message mappers
+    {
+        let mut server_socket = state.server_socket.lock().await;
+        server_socket.add_subscribe_filter(|key: MyKey, _ctx: &()| { key.bla == "bla" });
+        server_socket.add_send_mapper(|key: MyKey, msg: MyMsg, _ctx: &()| {
+            if key.bla == "bla" {
+                Some(MyMsg {
+                    awesome_msg: msg.awesome_msg.replace("old", "new"),
+                })
+            } else {
+                None
+            }
+        });
+    }
+
+    // Init the Axum app
+    let app = Router::new()
+        .leptos_routes(&state, routes, {
+            let leptos_options = state.leptos_options.clone();
+            move || shell(leptos_options.clone())
+        })
+        .socket_route(connect_to_websocket)    // Register the socket route (implementation below)
+        .fallback(leptos_axum::file_and_error_handler::<AppState, _>(shell))
+        .with_state(state);    // Register the state
+
+    let listener = tokio::net::TcpListener::bind(&addr).await.unwrap();
+    axum::serve(listener, app.into_make_service())
+        .await
+        .unwrap();
 }
 
-// Init the Axum app
-let app = Router::new()
-    .leptos_routes(&state, routes, {
-        use basic::app::shell;
-
-        let leptos_options = state.leptos_options.clone();
-        move || shell(leptos_options.clone())
-    })
-    .socket_route(connect_to_websocket)    // Register the socket route (implementation below)
-    .fallback(leptos_axum::file_and_error_handler::<AppState, _>(shell))
-    .with_state(state);    // Register the state
-```
-
-Implement the `connect_to_websocket` handler:
-
-```rust
+// Implement the `connect_to_websocket` handler:
 #[cfg(feature = "ssr")]
 pub async fn connect_to_websocket(
     ws: WebSocketUpgrade,
@@ -144,7 +152,7 @@ pub async fn connect_to_websocket(
     // Provide extra context like the user's ID for example that is passed to the permission filters
     let ctx = ();
 
-    upgrade_websocket( ws, socket, ctx)
+    upgrade_websocket(ws, socket, ctx)
 }
 ```
 
