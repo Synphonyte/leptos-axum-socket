@@ -230,8 +230,10 @@ impl SocketContext {
 
 /// Call this in your root component to provide the socket context.
 #[inline(always)]
-pub fn provide_socket_context() {
-    provide_context(SocketContext::new("".to_string()));
+pub fn provide_socket_context() -> SocketContext {
+    let ctx = SocketContext::new("".to_string());
+    provide_context(ctx);
+    ctx
 }
 
 /// Call this in your root component to provide the socket context.
@@ -242,9 +244,11 @@ pub fn provide_socket_context() {
 /// provide_socket_context_with_query(&[("user_id", "123456789")]);
 /// ```
 #[inline(always)]
-pub fn provide_socket_context_with_query<T: Serialize + ?Sized>(query: &T) {
+pub fn provide_socket_context_with_query<T: Serialize + ?Sized>(query: &T) -> SocketContext {
     let query_string = serde_urlencoded::to_string(query).expect("Failed to serialize query");
-    provide_context(SocketContext::new(query_string));
+    let ctx = SocketContext::new(query_string);
+    provide_context(ctx);
+    ctx
 }
 
 /// Call this when you want to subscribe or send a message in your component.

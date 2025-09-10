@@ -9,7 +9,7 @@ mod server;
 pub use context::*;
 use serde_json::Value;
 #[cfg(feature = "ssr")]
-pub use server::{ServerSocket, ServerSocketInner, send};
+pub use server::{ServerSocket, ServerSocketInner, send, send_to_self};
 
 pub const WEBSOCKET_CHANNEL_URL: &str = "/socket-msg";
 

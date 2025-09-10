@@ -17,13 +17,13 @@ jobs:
       - name: Check formatting
         run: cargo fmt --check
       - name: Clippy
-        run: cargo clippy --tests -- -D warnings
+        run: cargo clippy --features ssr --tests -- -D warnings
       - name: Check if the README is up to date.
         run: |
           cargo install cargo-rdme
           cargo rdme --check
       - name: Run tests
-        run: cargo test
+        run: cargo test --features ssr
 
   test_examples:
     name: Test Examples

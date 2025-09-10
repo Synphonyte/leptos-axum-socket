@@ -28,7 +28,7 @@ urlencoding = "2"
 wasm-bindgen = { version = "0.2.100", optional = true }
 
 [features]
-hydrate = ["leptos/hydrate", "dep:console_error_panic_hook", "dep:wasm-bindgen"]
+hydrate = ["leptos/hydrate", "leptos-axum-socket/hydrate", "dep:console_error_panic_hook", "dep:wasm-bindgen"]
 ssr = [
     "dep:axum",
     "dep:tokio",

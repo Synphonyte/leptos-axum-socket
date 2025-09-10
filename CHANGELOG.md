@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.3.0] - 2025-09-10
+
+- The `provide_socket_context...` methods now return the `SocketContext`.
+- Added `send_to_self()` for server functions.
+- Instead of calling `ws.on_upgrade` with a `handle_websocket...` function you now call `upgrade_websocket()`.
+- `ServerSocket::lock()` and server function `send()` are now async.
+
 ## [0.2.1] - 2025-09-09
 
 - `SocketContext::reconnect()` now keeps existing subscriptions

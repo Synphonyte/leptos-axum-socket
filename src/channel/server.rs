@@ -1,14 +1,19 @@
 use axum::extract::FromRef;
+use axum::http::header::COOKIE;
 use leptos::prelude::*;
+use leptos_use::utils::header;
+use regex::Regex;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use std::any::Any;
-use std::sync::{Mutex, MutexGuard};
 use std::{collections::HashMap, sync::Arc};
 use std::{fmt::Debug, hash::Hash};
-use tokio::sync::broadcast::{Receiver, Sender};
+use tokio::sync::broadcast::{self, Receiver};
+use tokio::sync::mpsc;
+use tokio::sync::{Mutex, MutexGuard};
 use tokio::task::JoinHandle;
-use tracing::{debug, instrument};
+use tracing::{debug, error, instrument};
+use uuid::Uuid;
 
 use crate::{ChannelMsg, SocketMsg};
 
@@ -21,8 +26,8 @@ impl ServerSocket {
     }
 
     #[inline]
-    pub fn lock(&self) -> MutexGuard<'_, ServerSocketInner> {
-        self.0.lock().expect("Failed to lock mutex")
+    pub async fn lock(&self) -> MutexGuard<'_, ServerSocketInner> {
+        self.0.lock().await
     }
 }
 
@@ -33,7 +38,8 @@ type SendMapFn =
 /// This is used on the server to manage socket connections.
 #[derive(Default)]
 pub struct ServerSocketInner {
-    sender_map: HashMap<Value, Sender<ChannelMsg>>,
+    sender_map: HashMap<Value, broadcast::Sender<ChannelMsg>>,
+    client_to_sender: HashMap<Uuid, mpsc::Sender<ChannelMsg>>,
     subscribe_filters: Vec<SubscribeFilterFn>,
     send_mappers: Vec<SendMapFn>,
     handles: HashMap<Value, JoinHandle<()>>,
@@ -51,11 +57,11 @@ impl std::fmt::Debug for ServerSocketInner {
 
 impl ServerSocketInner {
     #[instrument]
-    fn sender(&mut self, key: Value) -> Sender<ChannelMsg> {
+    fn sender(&mut self, key: Value) -> broadcast::Sender<ChannelMsg> {
         let sender = self.sender_map.entry(key).or_insert_with(|| {
             debug!("Creating new sender for key");
 
-            Sender::new(16)
+            broadcast::Sender::new(16)
         });
         sender.clone()
     }
@@ -68,6 +74,28 @@ impl ServerSocketInner {
                 err
             );
         }
+    }
+
+    #[instrument]
+    pub(crate) async fn send_to_self(&self, client_id: Uuid, key: Value, msg: Value) {
+        if let Some(sender) = self.client_to_sender.get(&client_id) {
+            if let Err(err) = sender.send(ChannelMsg::Msg { key, msg }).await {
+                debug!("Failed to send websocket message: {:?}", err);
+            }
+        } else {
+            error!(
+                "WebSocket transmitter for client ID {} not found",
+                client_id
+            );
+        }
+    }
+
+    pub(crate) fn insert_client_sender(
+        &mut self,
+        client_id: Uuid,
+        sender: mpsc::Sender<ChannelMsg>,
+    ) {
+        self.client_to_sender.insert(client_id, sender);
     }
 
     #[instrument]
@@ -166,7 +194,7 @@ impl ServerSocketInner {
 
 /// Broadcast a message from the server to the subscribers of the given key.
 #[instrument]
-pub fn send<Msg>(key: &Msg::Key, msg: &Msg)
+pub async fn send<Msg>(key: &Msg::Key, msg: &Msg)
 where
     Msg: SocketMsg + Serialize + Clone + Send + Sync + Debug + 'static,
     for<'de> Msg: Deserialize<'de>,
@@ -180,5 +208,52 @@ where
 
     let state: Msg::AppState = expect_context();
 
-    ServerSocket::from_ref(&state).lock().send(key, msg);
+    ServerSocket::from_ref(&state).lock().await.send(key, msg);
+}
+
+/// Send a message from the server only to the connection that called this server function.
+#[instrument]
+pub async fn send_to_self<Msg>(key: &Msg::Key, msg: &Msg)
+where
+    Msg: SocketMsg + Serialize + Clone + Send + Sync + Debug + 'static,
+    for<'de> Msg: Deserialize<'de>,
+    Msg::Key: Hash + Eq + Serialize + Clone + Send + Sync + Debug + 'static,
+    for<'de> Msg::Key: Deserialize<'de>,
+    Msg::AppState: Clone,
+    ServerSocket: FromRef<Msg::AppState>,
+{
+    let client_id = match extract_client_id() {
+        Ok(id) => id,
+        Err(err) => {
+            error!("Failed to extract client ID: {}", err);
+            return;
+        }
+    };
+
+    let key = serde_json::to_value(key).unwrap();
+    let msg = serde_json::to_value(msg).unwrap();
+
+    let state: Msg::AppState = expect_context();
+
+    ServerSocket::from_ref(&state)
+        .lock()
+        .await
+        .send_to_self(client_id, key, msg)
+        .await;
+}
+
+fn extract_client_id() -> Result<Uuid, String> {
+    let cookie_header = header(COOKIE).ok_or("No cookie header found")?;
+
+    // Parse value of cookie called socket_client_id
+    let re = Regex::new(r"socket_client_id=([^;]+)").unwrap();
+    let caps = re
+        .captures(&cookie_header)
+        .ok_or("socket_client_id cookie not found")?;
+    let client_id_str = caps
+        .get(1)
+        .ok_or("socket_client_id cookie value not found")?;
+
+    Uuid::parse_str(client_id_str.as_str())
+        .map_err(|err| format!("Invalid UUID in socket_client_id cookie: {}", err))
 }

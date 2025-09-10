@@ -5,7 +5,10 @@ use reactive_stores::Store;
 use uuid::Uuid;
 
 use crate::{
-    components::Message, data::{ChatKey, ChatMsg}, expect_user, User, UserStoreFields
+    User, UserStoreFields,
+    components::Message,
+    data::{ChatKey, ChatMsg},
+    expect_user,
 };
 
 #[component]
@@ -28,7 +31,6 @@ pub fn Room() -> impl IntoView {
 
 #[component]
 pub fn Chat(room_id: Uuid) -> impl IntoView {
-
     let user = expect_user();
 
     let authenticate = ServerAction::<Authenticate>::new();
@@ -44,7 +46,6 @@ pub fn Chat(room_id: Uuid) -> impl IntoView {
                 auth_resource
                     .await
                     .map(|is_auth| {
-                        leptos::logging::log!("is_auth: {is_auth}");
                         if is_auth {
                             Either::Left(view! { <ChatInner room_id user /> })
                         } else {
@@ -131,7 +132,11 @@ pub fn ChatInner(room_id: Uuid, user: Store<User>) -> impl IntoView {
 
 #[allow(unused_parens)]
 #[component]
-pub fn PasswordInput(room_id: Uuid, user: Store<User>, authenticate: ServerAction<Authenticate>) -> impl IntoView {
+pub fn PasswordInput(
+    room_id: Uuid,
+    user: Store<User>,
+    authenticate: ServerAction<Authenticate>,
+) -> impl IntoView {
     view! {
         <div class="flex fixed inset-0 z-50 justify-center items-center bg-black bg-opacity-50">
             <div class="p-6 mx-4 w-96 max-w-sm bg-white rounded-lg shadow-xl">

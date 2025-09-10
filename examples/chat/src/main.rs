@@ -14,7 +14,6 @@ async fn main() {
     use leptos::prelude::*;
     use leptos_axum::{LeptosRoutes, generate_route_list};
     use leptos_axum_socket::{ServerSocket, SocketRoute};
-    use tracing::debug;
     use tracing_subscriber::EnvFilter;
 
     use crate::socket_handlers::{connect_to_websocket, is_authenticated, sanitize_authenticated};
@@ -46,15 +45,12 @@ async fn main() {
         allowed_users,
     };
 
-    state
-        .server_socket
-        .lock()
-        .add_subscribe_filter(is_authenticated);
+    {
+        let mut server_socket = state.server_socket.lock().await;
 
-    state
-        .server_socket
-        .lock()
-        .add_send_mapper(sanitize_authenticated);
+        server_socket.add_subscribe_filter(is_authenticated);
+        server_socket.add_send_mapper(sanitize_authenticated);
+    }
 
     let app = Router::new()
         .leptos_routes(&state, routes, {

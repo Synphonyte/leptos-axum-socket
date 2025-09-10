@@ -6,7 +6,7 @@ use chat::{
     AllowedUsers, AppState,
     data::{ChatKey, ChatMsg},
 };
-use leptos_axum_socket::ServerSocket;
+use leptos_axum_socket::{ServerSocket, handlers::upgrade_websocket};
 use serde::Deserialize;
 use tracing::debug;
 use uuid::Uuid;
@@ -30,16 +30,14 @@ pub async fn connect_to_websocket(
 ) -> Response {
     debug!("User {} connected", user_id);
 
-    ws.on_upgrade(move |websocket| {
-        leptos_axum_socket::handlers::handle_websocket_with_context(
-            websocket,
-            socket,
-            SocketCtx {
-                user_id,
-                allowed_users,
-            },
-        )
-    })
+    upgrade_websocket(
+        ws,
+        socket,
+        SocketCtx {
+            user_id,
+            allowed_users,
+        },
+    )
 }
 
 pub fn is_authenticated(key: ChatKey, socket_ctx: &SocketCtx) -> bool {

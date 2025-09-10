@@ -4,7 +4,7 @@ use axum::{
     response::Response,
 };
 #[cfg(feature = "ssr")]
-use leptos_axum_socket::ServerSocket;
+use leptos_axum_socket::{ServerSocket, handlers::upgrade_websocket};
 
 #[cfg(feature = "ssr")]
 #[tokio::main]
@@ -57,7 +57,7 @@ pub async fn connect_to_websocket(
     ws: WebSocketUpgrade,
     State(socket): State<ServerSocket>,
 ) -> Response {
-    ws.on_upgrade(|websocket| leptos_axum_socket::handlers::handle_websocket(websocket, socket))
+    upgrade_websocket(ws, socket, ())
 }
 
 #[cfg(not(feature = "ssr"))]

@@ -1,6 +1,6 @@
 [package]
 name = "leptos-axum-socket"
-version = "0.2.1"
+version = "0.3.0"
 edition = "2024"
 authors = ["Marc-Stefan Cassola"]
 categories = ["gui", "web-programming", "wasm"]
@@ -17,24 +17,31 @@ crate-type = ["cdylib", "rlib"]
 [dependencies]
 anyhow = "1"
 axum = { version = "0.8.0", optional = true, features = ["macros"] }
+cookie = { version = "0.18", optional = true }
 futures-util = "0.3.31"
 leptos = { version = "0.8.0" }
 leptos-use = { version = "0.16.2", default-features = false, features = [
     "use_websocket",
+
 ] }
 leptos_axum = { version = "0.8.0", optional = true }
+regex = { version = "1", optional = true }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 serde_urlencoded = "0.7.1"
 tokio = { version = "1", features = ["rt-multi-thread"], optional = true }
 tracing = "0.1.41"
+uuid = { version = "1.18.1", features = ["v4", "serde"] }
 
 [features]
 ssr = [
     "dep:axum",
+    "dep:cookie",
     "dep:tokio",
     "dep:leptos_axum",
+    "dep:regex",
     "leptos/ssr",
     "leptos-use/ssr",
     "leptos-use/axum",
 ]
+hydrate = ["leptos/hydrate", "uuid/js"]

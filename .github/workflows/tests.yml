@@ -28,4 +28,4 @@ jobs:
         uses: Swatinem/rust-cache@v2
 
       - name: Run tests (general)
-        run: cargo test --features chrono,uuid,rust_decimal,time
+        run: cargo test --features ssr

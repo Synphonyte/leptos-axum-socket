@@ -96,14 +96,14 @@ impl SocketMsg for ToastMsg {
 pub async fn bla() -> Result<(), ServerFnError> {
     leptos::logging::log!("sending");
 
-    leptos_axum_socket::send(
+    leptos_axum_socket::send_to_self(
         &ToastKey {
             session_id: "bla".to_string(),
         },
         &ToastMsg {
             message: "Hello, world!".to_string(),
         },
-    );
+    ).await;
 
     Ok(())
 }

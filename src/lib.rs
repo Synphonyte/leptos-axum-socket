@@ -4,14 +4,17 @@
 //!
 //! ```
 //! # use leptos::prelude::*;
-//! # use leptos_axum_socket::{expect_socket_context, SocketMsg};
+//! # use leptos_axum_socket::{expect_socket_context, ServerSocket, SocketMsg};
 //! # use serde::{Serialize, Deserialize};
+//! # use axum::extract::{State, FromRef};
 //! #
-//! # // Dummy AppState to make this compile.
-//! # struct AppState;
+//! # #[derive(FromRef, Clone)]
+//! # pub struct AppState {
+//! #     pub socket: ServerSocket,
+//! # }
 //! #
 //! // Define the key and message types
-//! #[derive(Clone, Serialize, Deserialize)]
+//! #[derive(Clone, Serialize, Deserialize, PartialEq, Eq, Hash, Debug)]
 //! pub struct MyKey {
 //!     pub bla: String,
 //! }
@@ -68,7 +71,7 @@
 //!        &MyMsg {
 //!            awesome_msg: "Hello, world!".to_string(),
 //!        },
-//!     );
+//!     ).await;
 //!
 //!     Ok(())
 //! }
@@ -101,16 +104,20 @@
 //!     server_socket: ServerSocket::new(),
 //! };
 //!
-//! // Optional: add permissions filters
-//! state.server_socket.add_permission_filter(|key: MyKey, _ctx: &()| {
-//!     if key.bla == "bla" {
-//!         SocketPermission::Allow
-//!     } else if key.bla == "bla2" {
-//!         SocketPermission::ReadOnly
-//!     } else {
-//!         SocketPermission::Deny
-//!     }
-//! });
+//! // Optional: add subscription filters and message mappers
+//! {
+//!     let mut server_socket = state.server_socket.lock().await;
+//!     server_socket.add_subscribe_filter(|key: MyKey, _ctx: &()| { key.bla == "bla" });
+//!     server_socket.add_send_mapper(|key: MyKey, msg: MyMsg, _ctx: &()| {
+//!         if key.bla == "bla" {
+//!             Some(MyMsg {
+//!                 awesome_msg: msg.awesome_msg.replace("old", "new"),
+//!             })
+//!         } else {
+//!             None
+//!         }
+//!     });
+//! }
 //!
 //! // Init the Axum app
 //! let app = Router::new()
@@ -128,6 +135,9 @@
 //! Implement the `connect_to_websocket` handler:
 //!
 //! ```
+//! # use axum::{extract::{State, WebSocketUpgrade}, response::Response};
+//! # use leptos_axum_socket::{ServerSocket, handlers::upgrade_websocket};
+//! #
 //! #[cfg(feature = "ssr")]
 //! pub async fn connect_to_websocket(
 //!     ws: WebSocketUpgrade,
@@ -138,7 +148,7 @@
 //!     // Provide extra context like the user's ID for example that is passed to the permission filters
 //!     let ctx = ();
 //!
-//!     ws.on_upgrade(|websocket| leptos_axum_socket::handlers::handle_websocket_with_context(websocket, socket, ctx))
+//!     upgrade_websocket( ws, socket, ctx)
 //! }
 //! ```
 //!
@@ -168,11 +178,14 @@ pub use crate::channel::*;
 /// On the server you have to provide the application state as well.
 ///
 /// ```
-/// # use leptos_axum_socket::SocketMsg;
+/// # use leptos_axum_socket::{ServerSocket, SocketMsg};
 /// # use serde::{Serialize, Deserialize};
+/// # use axum::extract::FromRef;
 /// #
-/// # // Dummy AppState to make this compile.
-/// # struct AppState;
+/// # #[derive(FromRef, Clone)]
+/// # pub struct AppState {
+/// #     pub socket: ServerSocket,
+/// # }
 /// #
 /// // Define the key and message types
 /// #[derive(Clone, Serialize, Deserialize)]
