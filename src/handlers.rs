@@ -65,7 +65,9 @@ async fn handle_websocket_with_context<C>(
 
                 match msg {
                     ChannelMsg::Subscribe { key } => {
-                        if socket.can_subscribe(key.clone(), &context) && subscribed_keys.len() < MAX_SUBSCRIPTIONS {
+                        if socket.can_subscribe(key.clone(), &context)
+                            && subscribed_keys.len() < MAX_SUBSCRIPTIONS
+                        {
                             let ws_tx = Arc::clone(&ws_tx);
                             let broadcast_rx = socket.subscribe(key.clone());
 
