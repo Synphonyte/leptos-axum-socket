@@ -16,6 +16,7 @@ pub struct Q {
     user_id: Uuid,
 }
 
+#[derive(Clone)]
 pub struct SocketCtx {
     user_id: Uuid,
     allowed_users: AllowedUsers,
@@ -40,7 +41,7 @@ pub async fn connect_to_websocket(
     )
 }
 
-pub fn is_authenticated(key: ChatKey, socket_ctx: &SocketCtx) -> bool {
+pub async fn is_authenticated(key: ChatKey, socket_ctx: SocketCtx) -> bool {
     // Check authentication
     if let Some(users) = socket_ctx.allowed_users.0.lock().unwrap().get(&key.room_id) {
         users.contains(&socket_ctx.user_id)
@@ -50,15 +51,10 @@ pub fn is_authenticated(key: ChatKey, socket_ctx: &SocketCtx) -> bool {
 }
 
 pub fn sanitize_authenticated(
-    key: ChatKey,
+    _key: ChatKey,
     msg: ChatMsg,
-    socket_ctx: &SocketCtx,
+    _socket_ctx: &SocketCtx,
 ) -> Option<ChatMsg> {
-    // Check authentication
-    if !is_authenticated(key, socket_ctx) {
-        return None;
-    }
-
     Some(sanitize_message(msg))
 }
 

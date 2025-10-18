@@ -1,5 +1,11 @@
 # Changelog
 
+## [0.4.0] - 2025-10-18
+
+- Subscription filters are now `async`
+- Added a `send()` method to the `ServerSocket` to allow sending messages outside of server functions
+
+
 ## [0.3.0] - 2025-09-10
 
 - The `provide_socket_context...` methods now return the `SocketContext`.

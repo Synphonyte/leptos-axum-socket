@@ -25,7 +25,7 @@ async fn handle_websocket_with_context<C>(
     client_id: Uuid,
     context: C,
 ) where
-    C: 'static,
+    C: Send + Sync + 'static,
 {
     let (ws_tx, mut ws_rx) = ws.split();
 
@@ -65,7 +65,7 @@ async fn handle_websocket_with_context<C>(
 
                 match msg {
                     ChannelMsg::Subscribe { key } => {
-                        if socket.can_subscribe(key.clone(), &context)
+                        if socket.can_subscribe(key.clone(), &context).await
                             && subscribed_keys.len() < MAX_SUBSCRIPTIONS
                         {
                             let ws_tx = Arc::clone(&ws_tx);
@@ -85,7 +85,7 @@ async fn handle_websocket_with_context<C>(
                     }
                     ChannelMsg::Msg { msg, key } => {
                         if let Some(msg) = socket.map_msg(key.clone(), msg.clone(), &context) {
-                            socket.send(key, msg);
+                            socket.send_serialized(key, msg);
                         }
                     }
                 }
@@ -157,7 +157,7 @@ async fn recv_broadcast(
 /// ```
 pub fn upgrade_websocket<C>(ws: WebSocketUpgrade, socket: ServerSocket, context: C) -> Response
 where
-    C: Send + 'static,
+    C: Send + Sync + 'static,
 {
     let client_id = uuid::Uuid::new_v4();
 

@@ -149,7 +149,7 @@
 //!     // Optional: add subscription filters and message mappers
 //!     {
 //!         let mut server_socket = state.server_socket.lock().await;
-//!         server_socket.add_subscribe_filter(|key: MyKey, _ctx: &()| { key.bla == "bla" });
+//!         server_socket.add_subscribe_filter(async |key: MyKey, _ctx: &()| { key.bla == "bla" });
 //!         server_socket.add_send_mapper(|key: MyKey, msg: MyMsg, _ctx: &()| {
 //!             if key.bla == "bla" {
 //!                 Some(MyMsg {

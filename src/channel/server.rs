@@ -6,6 +6,7 @@ use regex::Regex;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use std::any::Any;
+use std::pin::Pin;
 use std::{collections::HashMap, sync::Arc};
 use std::{fmt::Debug, hash::Hash};
 use tokio::sync::broadcast::{self, Receiver};
@@ -31,7 +32,8 @@ impl ServerSocket {
     }
 }
 
-type SubscribeFilterFn = Arc<dyn Fn(Value, &dyn Any) -> bool + Send + Sync>;
+type SubscribeFilterFn =
+    Arc<dyn Fn(Value, &dyn Any) -> Pin<Box<dyn Future<Output = bool> + Send>> + Send + Sync>;
 type SendMapFn =
     Arc<dyn Fn(Value, Value, &dyn Any) -> serde_json::Result<Option<Value>> + Send + Sync>;
 
@@ -66,8 +68,23 @@ impl ServerSocketInner {
         sender.clone()
     }
 
+    /// Broadcast a message from the server to the subscribers of the given key.
     #[instrument]
-    pub(crate) fn send(&mut self, key: Value, msg: Value) {
+    pub fn send<Msg>(&mut self, key: &Msg::Key, msg: &Msg)
+    where
+        Msg: SocketMsg + Serialize + Clone + Send + Sync + Debug + 'static,
+        for<'de> Msg: Deserialize<'de>,
+        Msg::Key: Hash + Eq + Serialize + Clone + Send + Sync + Debug + 'static,
+        for<'de> Msg::Key: Deserialize<'de>,
+    {
+        let key = serde_json::to_value(key).unwrap();
+        let msg = serde_json::to_value(msg).unwrap();
+
+        self.send_serialized(key, msg);
+    }
+
+    #[instrument]
+    pub(crate) fn send_serialized(&mut self, key: Value, msg: Value) {
         if let Err(err) = self.sender(key.clone()).send(ChannelMsg::Msg { msg, key }) {
             debug!(
                 "Failed to send message because there are no receivers: {:?}",
@@ -77,7 +94,7 @@ impl ServerSocketInner {
     }
 
     #[instrument]
-    pub(crate) async fn send_to_self(&self, client_id: Uuid, key: Value, msg: Value) {
+    pub(crate) async fn send_serialized_to_self(&self, client_id: Uuid, key: Value, msg: Value) {
         if let Some(sender) = self.client_to_sender.get(&client_id) {
             if let Err(err) = sender.send(ChannelMsg::Msg { key, msg }).await {
                 debug!("Failed to send websocket message: {:?}", err);
@@ -122,23 +139,30 @@ impl ServerSocketInner {
     /// It can then return `true` to allow the subscription or `false` to deny it.
     /// If multiple filters are found for a given key,
     /// the subscription will only be allowed if all filters return `true`.
-    pub fn add_subscribe_filter<K, C, F>(&mut self, filter: F)
+    pub fn add_subscribe_filter<K, C, F, Fut>(&mut self, filter: F)
     where
+        K: Send + Sync,
         for<'de> K: Deserialize<'de>,
-        F: Fn(K, &C) -> bool + Send + Sync + 'static,
-        C: 'static,
+        F: Fn(K, C) -> Fut + Clone + Send + Sync + 'static,
+        Fut: Future<Output = bool> + Send,
+        C: Clone + Send + Sync + 'static,
     {
         self.subscribe_filters
             .push(Arc::new(move |key: Value, ctx: &dyn Any| {
                 let ctx: &C = ctx.downcast_ref().expect("Invalid context type");
+                let ctx = ctx.clone();
 
-                match serde_json::from_value(key) {
-                    Ok(key) => filter(key, ctx),
-                    Err(_) => {
-                        // This filter doesn't apply to the key
-                        true
+                let filter = filter.clone();
+
+                Box::pin(async move {
+                    match serde_json::from_value(key) {
+                        Ok(key) => filter(key, ctx).await,
+                        Err(_) => {
+                            // This filter doesn't apply to the key
+                            true
+                        }
                     }
-                }
+                })
             }));
     }
 
@@ -169,14 +193,14 @@ impl ServerSocketInner {
             }));
     }
 
-    pub(crate) fn can_subscribe<C>(&self, key: Value, ctx: &C) -> bool
+    pub(crate) async fn can_subscribe<C>(&self, key: Value, ctx: &C) -> bool
     where
-        C: 'static,
+        C: Send + Sync + 'static,
     {
         let mut can_subscribe = true;
 
         for filter in &self.subscribe_filters {
-            can_subscribe = can_subscribe && filter(key.clone(), ctx);
+            can_subscribe = can_subscribe && filter(key.clone(), ctx).await;
         }
 
         can_subscribe
@@ -196,7 +220,7 @@ impl ServerSocketInner {
     }
 }
 
-/// Broadcast a message from the server to the subscribers of the given key.
+/// Broadcast a message from a server function to the subscribers of the given key.
 #[instrument]
 pub async fn send<Msg>(key: &Msg::Key, msg: &Msg)
 where
@@ -207,15 +231,12 @@ where
     Msg::AppState: Clone,
     ServerSocket: FromRef<Msg::AppState>,
 {
-    let key = serde_json::to_value(key).unwrap();
-    let msg = serde_json::to_value(msg).unwrap();
-
     let state: Msg::AppState = expect_context();
 
     ServerSocket::from_ref(&state).lock().await.send(key, msg);
 }
 
-/// Send a message from the server only to the connection that called this server function.
+/// Send a message from a server function only to the connection that called this server function.
 #[instrument]
 pub async fn send_to_self<Msg>(key: &Msg::Key, msg: &Msg)
 where
@@ -242,7 +263,7 @@ where
     ServerSocket::from_ref(&state)
         .lock()
         .await
-        .send_to_self(client_id, key, msg)
+        .send_serialized_to_self(client_id, key, msg)
         .await;
 }
 
