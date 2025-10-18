@@ -162,7 +162,7 @@
 //!     }
 //!
 //!     // Init the Axum app
-//!     let app = Router::new()
+//!     let app: Router<AppState> = Router::new()
 //!         .leptos_routes(&state, routes, {
 //!             let leptos_options = state.leptos_options.clone();
 //!             move || shell(leptos_options.clone())
@@ -172,9 +172,9 @@
 //!         .with_state(state);    // Register the state
 //!
 //!     let listener = tokio::net::TcpListener::bind(&addr).await.unwrap();
-//!     axum::serve(listener, app.into_make_service())
-//!         .await
-//!         .unwrap();
+//!     // axum::serve(listener, app.into_make_service())
+//!     //    .await
+//!     //    .unwrap();
 //! }
 //!
 //! // Implement the `connect_to_websocket` handler:
