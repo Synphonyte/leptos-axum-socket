@@ -1,5 +1,10 @@
 # Changelog
 
+## [0.4.1] - 2025-10-26
+
+- Added `ServerSocketInner::send_to_self` to allow sending messages from an axum handler.
+- Improved docs
+
 ## [0.4.0] - 2025-10-18
 
 - Subscription filters are now `async`

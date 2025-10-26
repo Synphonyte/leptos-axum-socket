@@ -1,4 +1,5 @@
 use axum::extract::FromRef;
+use axum::http::HeaderMap;
 use axum::http::header::COOKIE;
 use leptos::prelude::*;
 use leptos_use::utils::header;
@@ -18,6 +19,7 @@ use uuid::Uuid;
 
 use crate::{ChannelMsg, SocketMsg};
 
+/// This has to be added to the axum state and is used to send and subscribe to channels.
 #[derive(Clone, Debug, Default)]
 pub struct ServerSocket(Arc<Mutex<ServerSocketInner>>);
 
@@ -26,6 +28,9 @@ impl ServerSocket {
         Self::default()
     }
 
+    /// Locks the server socket for exclusive access. With this you can then send messages to the socket.
+    ///
+    /// See [`ServerSocketInner::send`].
     #[inline]
     pub async fn lock(&self) -> MutexGuard<'_, ServerSocketInner> {
         self.0.lock().await
@@ -69,6 +74,38 @@ impl ServerSocketInner {
     }
 
     /// Broadcast a message from the server to the subscribers of the given key.
+    ///
+    /// This is used to send messages from an axum handler.
+    /// If you want to send from a server function, use the module level [`send`] function.
+    ///
+    /// ## Example
+    ///
+    /// ```
+    /// # use leptos_axum_socket::{ServerSocket, SocketMsg};
+    /// # use serde::{Serialize, Deserialize};
+    /// # use axum::extract::{State, FromRef};
+    /// #
+    /// # #[derive(FromRef, Clone)]
+    /// # pub struct AppState {
+    /// #     pub socket: ServerSocket,
+    /// # }
+    /// #
+    /// # #[derive(Clone, Serialize, Deserialize, PartialEq, Eq, Hash, Debug)]
+    /// # struct TheKey;
+    /// #
+    /// # #[derive(Clone, Serialize, Deserialize, Debug)]
+    /// # struct TheMessage;
+    /// #
+    /// # impl SocketMsg for TheMessage {
+    /// #     type Key = TheKey;
+    /// #     #[cfg(feature = "ssr")]
+    /// #     type AppState = AppState;
+    /// # }
+    ///
+    /// async fn axum_handler(State(socket): State<ServerSocket>) {
+    ///     socket.lock().await.send(&TheKey, &TheMessage);
+    /// }
+    /// ```
     #[instrument]
     pub fn send<Msg>(&mut self, key: &Msg::Key, msg: &Msg)
     where
@@ -81,6 +118,67 @@ impl ServerSocketInner {
         let msg = serde_json::to_value(msg).unwrap();
 
         self.send_serialized(key, msg);
+    }
+
+    /// Broadcast a message from the server to the subscribers of the given key.
+    ///
+    /// This is used to send messages from an axum handler.
+    /// If you want to send from a server function, use the module level [`send_to_self`] function.
+    ///
+    /// ## Example
+    ///
+    /// ```
+    /// # use leptos_axum_socket::{ServerSocket, SocketMsg};
+    /// # use serde::{Serialize, Deserialize};
+    /// # use axum::{extract::{State, FromRef}, http::header::HeaderMap};
+    /// #
+    /// # #[derive(FromRef, Clone)]
+    /// # pub struct AppState {
+    /// #     pub socket: ServerSocket,
+    /// # }
+    /// #
+    /// # #[derive(Clone, Serialize, Deserialize, PartialEq, Eq, Hash, Debug)]
+    /// # struct TheKey;
+    /// #
+    /// # #[derive(Clone, Serialize, Deserialize, Debug)]
+    /// # struct TheMessage;
+    /// #
+    /// # impl SocketMsg for TheMessage {
+    /// #     type Key = TheKey;
+    /// #     #[cfg(feature = "ssr")]
+    /// #     type AppState = AppState;
+    /// # }
+    ///
+    /// async fn axum_handler(State(socket): State<ServerSocket>, headers: HeaderMap) {
+    ///     socket.lock().await.send_to_self(&TheKey, &TheMessage, &headers).await;
+    /// }
+    /// ```
+    #[instrument]
+    pub async fn send_to_self<Msg>(&mut self, key: &Msg::Key, msg: &Msg, headers: &HeaderMap)
+    where
+        Msg: SocketMsg + Serialize + Clone + Send + Sync + Debug + 'static,
+        for<'de> Msg: Deserialize<'de>,
+        Msg::Key: Hash + Eq + Serialize + Clone + Send + Sync + Debug + 'static,
+        for<'de> Msg::Key: Deserialize<'de>,
+    {
+        if let Some(cookie_header) = headers.get(COOKIE) {
+            match cookie_header.to_str() {
+                Ok(cookie_header) => match read_client_id_from_cookie_header(cookie_header) {
+                    Ok(client_id) => {
+                        let key = serde_json::to_value(key).unwrap();
+                        let msg = serde_json::to_value(msg).unwrap();
+
+                        self.send_serialized_to_self(client_id, key, msg).await;
+                    }
+                    Err(err) => error!("Failed to parse Uuid from cookie: {:?}", err),
+                },
+                Err(err) => {
+                    error!("Failed to parse cookie header: {:?}", err);
+                }
+            }
+        } else {
+            error!("Cookie header not found. Can't send to self");
+        }
     }
 
     #[instrument]
@@ -221,6 +319,9 @@ impl ServerSocketInner {
 }
 
 /// Broadcast a message from a server function to the subscribers of the given key.
+///
+/// You can call this function only from a server function.
+/// If you want to call this from an axum handler, use `ServerSocketInner::send` instead.
 #[instrument]
 pub async fn send<Msg>(key: &Msg::Key, msg: &Msg)
 where
@@ -231,12 +332,23 @@ where
     Msg::AppState: Clone,
     ServerSocket: FromRef<Msg::AppState>,
 {
-    let state: Msg::AppState = expect_context();
+    let state: Msg::AppState = match use_context() {
+        Some(state) => state,
+        None => {
+            error!(
+                "Failed to get the app state context. You can call this function only from a server function. If you want to call this from an axum handler, use `ServerSocketInner::send` instead."
+            );
+            return;
+        }
+    };
 
     ServerSocket::from_ref(&state).lock().await.send(key, msg);
 }
 
 /// Send a message from a server function only to the connection that called this server function.
+///
+/// You can call this function only from a server function.
+/// If you want to call this from an axum handler use [`ServerSocketInner::send_to_self`] instead.
 #[instrument]
 pub async fn send_to_self<Msg>(key: &Msg::Key, msg: &Msg)
 where
@@ -247,10 +359,13 @@ where
     Msg::AppState: Clone,
     ServerSocket: FromRef<Msg::AppState>,
 {
-    let client_id = match extract_client_id() {
+    let client_id = match extract_client_id_server_fn() {
         Ok(id) => id,
         Err(err) => {
-            error!("Failed to extract client ID: {}", err);
+            error!(
+                "Failed to extract client ID: {}. You can call this function only from a server function. If you want to call this from an axum handler use `ServerSocketInner::send_to_self` instead.",
+                err
+            );
             return;
         }
     };
@@ -267,13 +382,17 @@ where
         .await;
 }
 
-fn extract_client_id() -> Result<Uuid, String> {
+fn extract_client_id_server_fn() -> Result<Uuid, String> {
     let cookie_header = header(COOKIE).ok_or("No cookie header found")?;
 
+    read_client_id_from_cookie_header(&cookie_header)
+}
+
+fn read_client_id_from_cookie_header(cookie_header: &str) -> Result<Uuid, String> {
     // Parse value of cookie called socket_client_id
     let re = Regex::new(r"socket_client_id=([^;]+)").unwrap();
     let caps = re
-        .captures(&cookie_header)
+        .captures(cookie_header)
         .ok_or("socket_client_id cookie not found")?;
     let client_id_str = caps
         .get(1)

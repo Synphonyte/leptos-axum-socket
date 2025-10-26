@@ -205,6 +205,11 @@
 //!     view! { "..." }
 //! }
 //! ```
+//!
+//! ### Axum Handlers
+//!
+//! You can also send messages from inside axum handlers.
+//! Checkout [`ServerSocketInner::send`] and [`ServerSocketInner::send_to_self`].
 
 pub mod channel;
 #[cfg(feature = "ssr")]
