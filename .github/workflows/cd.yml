@@ -18,10 +18,12 @@ jobs:
         run: cargo fmt --check
       - name: Clippy
         run: cargo clippy --features ssr --tests -- -D warnings
+      - name: Install Cargo Rdme
+        uses: taiki-e/install-action@v2
+        with:
+          tool: cargo-rdme
       - name: Check if the README is up to date.
-        run: |
-          cargo install cargo-rdme
-          cargo rdme --check
+        run: cargo rdme --check
       - name: Run tests
         run: cargo test --features ssr
 
