@@ -187,6 +187,7 @@ impl SocketContext {
                 .unwrap();
 
             self.effect_stops.write_value().remove(&key_value);
+            self.subscribers.write_value().remove(&key_value);
 
             self.send.get_value()(&ChannelMsg::Unsubscribe { key: key_value });
         }
@@ -231,9 +232,13 @@ impl SocketContext {
 /// Call this in your root component to provide the socket context.
 #[inline(always)]
 pub fn provide_socket_context() -> SocketContext {
-    let ctx = SocketContext::new("".to_string());
-    provide_context(ctx);
-    ctx
+    if let Some(ctx) = use_context::<SocketContext>() {
+        ctx
+    } else {
+        let ctx = SocketContext::new("".to_string());
+        provide_context(ctx);
+        ctx
+    }
 }
 
 /// Call this in your root component to provide the socket context.
