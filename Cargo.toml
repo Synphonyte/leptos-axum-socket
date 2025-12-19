@@ -19,7 +19,7 @@ axum = { version = "0.8", optional = true, features = ["macros"] }
 cookie = { version = "0.18", optional = true }
 futures-util = "0.3"
 leptos = { version = "0.8" }
-leptos-use = { version = "0.16.2", default-features = false, features = [
+leptos-use = { version = "0.17.0", default-features = false, features = [
   "use_websocket",
 ] }
 leptos_axum = { version = "0.8", optional = true }
