@@ -1,6 +1,6 @@
 [package]
 name = "leptos-axum-socket"
-version = "0.4.1"
+version = "0.5.0"
 edition = "2024"
 categories = ["gui", "web-programming", "wasm"]
 description = "Realtime pub/sub communication for Leptos + Axum applications."
@@ -19,7 +19,7 @@ axum = { version = "0.8", optional = true, features = ["macros"] }
 cookie = { version = "0.18", optional = true }
 futures-util = { version = "0.3", optional = true }
 leptos = { version = "0.8" }
-leptos-use = { version = "0.17.0", default-features = false, features = [
+leptos-use = { version = "0.17", default-features = false, features = [
   "use_websocket",
 ] }
 leptos_axum = { version = "0.8", optional = true }
