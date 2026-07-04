@@ -1,7 +1,7 @@
 [package]
+edition = "2024"
 name = "basic"
 version = "0.1.0"
-edition = "2024"
 
 [lib]
 crate-type = ["cdylib", "rlib"]
@@ -22,31 +22,31 @@ tokio = { version = "1", features = ["rt-multi-thread"], optional = true }
 tracing = "0.1.41"
 tracing-subscriber = { version = "0.3.20", features = ["env-filter"] }
 urlencoding = "2"
-wasm-bindgen = { version = "=0.2.106", optional = true }
+wasm-bindgen = { version = "0.2", optional = true }
 
 [features]
 hydrate = [
-  "leptos/hydrate",
-  "leptos-axum-socket/hydrate",
-  "dep:console_error_panic_hook",
-  "dep:wasm-bindgen",
+    "dep:console_error_panic_hook",
+    "dep:wasm-bindgen",
+    "leptos-axum-socket/hydrate",
+    "leptos/hydrate",
 ]
 ssr = [
-  "dep:axum",
-  "dep:tokio",
-  "dep:leptos_axum",
-  "leptos/ssr",
-  "leptos_meta/ssr",
-  "leptos_router/ssr",
-  "leptos-axum-socket/ssr",
+    "dep:axum",
+    "dep:leptos_axum",
+    "dep:tokio",
+    "leptos-axum-socket/ssr",
+    "leptos/ssr",
+    "leptos_meta/ssr",
+    "leptos_router/ssr",
 ]
 
 # Defines a size-optimized profile for the WASM bundle in release mode
 [profile.wasm-release]
-inherits = "release"
-opt-level = 'z'
-lto = true
 codegen-units = 1
+inherits = "release"
+lto = true
+opt-level = 'z'
 panic = "abort"
 
 [package.metadata.leptos]
