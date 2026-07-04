@@ -1,14 +1,14 @@
 [package]
-name = "leptos-axum-socket"
-version = "0.6.0"
-edition = "2024"
-categories = ["gui", "web-programming", "wasm"]
+categories = ["gui", "wasm", "web-programming"]
 description = "Realtime pub/sub communication for Leptos + Axum applications."
+edition = "2024"
 exclude = ["examples/", "tests/"]
-keywords = ["leptos", "pubsub", "websocket", "communication"]
+keywords = ["communication", "leptos", "pubsub", "websocket"]
 license = "MIT OR Apache-2.0"
+name = "leptos-axum-socket"
 readme = "README.md"
 repository = "https://github.com/Synphonyte/leptos-axum-socket"
+version = "0.7.0"
 
 [lib]
 crate-type = ["cdylib", "rlib"]
@@ -19,8 +19,8 @@ axum = { version = "0.8", optional = true, features = ["macros"] }
 cookie = { version = "0.18", optional = true }
 futures-util = { version = "0.3", optional = true }
 leptos = { version = "0.8" }
-leptos-use = { version = "0.18", default-features = false, features = [
-  "use_websocket",
+leptos-use = { version = "0.19", default-features = false, features = [
+    "use_websocket",
 ] }
 leptos_axum = { version = "0.8", optional = true }
 regex = { version = "1", optional = true }
@@ -29,18 +29,18 @@ serde_json = "1"
 serde_urlencoded = "0.7"
 tokio = { version = "1", features = ["rt-multi-thread"], optional = true }
 tracing = "0.1"
-uuid = { version = "1", features = ["v4", "serde"] }
+uuid = { version = "1", features = ["serde", "v4"] }
 
 [features]
-ssr = [
-  "dep:axum",
-  "dep:cookie",
-  "dep:tokio",
-  "dep:leptos_axum",
-  "dep:regex",
-  "leptos/ssr",
-  "leptos-use/ssr",
-  "leptos-use/axum",
-  "dep:futures-util",
-]
 hydrate = ["leptos/hydrate", "uuid/js"]
+ssr = [
+    "dep:axum",
+    "dep:cookie",
+    "dep:futures-util",
+    "dep:leptos_axum",
+    "dep:regex",
+    "dep:tokio",
+    "leptos-use/axum",
+    "leptos-use/ssr",
+    "leptos/ssr",
+]
