@@ -49,7 +49,7 @@ pub struct SocketOptions {
 impl Default for SocketOptions {
     fn default() -> Self {
         Self {
-            max_message_size: 1024 * 1024,
+            max_message_size: 64 * 1024,
             max_key_size: 4 * 1024,
             max_subscriptions: 256,
             allowed_origins: None,
@@ -63,7 +63,7 @@ impl Default for SocketOptions {
 
 impl SocketOptions {
     /// Largest message accepted from a client, in bytes. A client that sends a bigger one is
-    /// disconnected. Defaults to 1 MiB.
+    /// disconnected. Defaults to 64 KiB.
     pub fn max_message_size(self, bytes: usize) -> Self {
         Self {
             max_message_size: bytes,
