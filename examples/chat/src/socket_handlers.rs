@@ -1,5 +1,6 @@
 use axum::{
     extract::{Query, State, WebSocketUpgrade},
+    http::HeaderMap,
     response::Response,
 };
 use chat::{
@@ -25,6 +26,7 @@ pub struct SocketCtx {
 #[axum::debug_handler(state = AppState)]
 pub async fn connect_to_websocket(
     ws: WebSocketUpgrade,
+    headers: HeaderMap,
     State(socket): State<ServerSocket>,
     State(allowed_users): State<AllowedUsers>,
     Query(Q { user_id }): Query<Q>,
@@ -33,6 +35,7 @@ pub async fn connect_to_websocket(
 
     upgrade_websocket(
         ws,
+        &headers,
         socket,
         SocketCtx {
             user_id,
@@ -42,20 +45,26 @@ pub async fn connect_to_websocket(
 }
 
 pub async fn is_authenticated(key: ChatKey, socket_ctx: SocketCtx) -> bool {
-    // Check authentication
-    if let Some(users) = socket_ctx.allowed_users.0.lock().unwrap().get(&key.room_id) {
-        users.contains(&socket_ctx.user_id)
-    } else {
-        true
-    }
+    may_access_room(&socket_ctx, key.room_id)
 }
 
 pub fn sanitize_authenticated(
-    _key: ChatKey,
+    key: ChatKey,
     msg: ChatMsg,
-    _socket_ctx: &SocketCtx,
+    socket_ctx: &SocketCtx,
 ) -> Option<ChatMsg> {
-    Some(sanitize_message(msg))
+    may_access_room(socket_ctx, key.room_id).then(|| sanitize_message(msg))
+}
+
+fn may_access_room(socket_ctx: &SocketCtx, room_id: Uuid) -> bool {
+    // Rooms without an entry are public
+    socket_ctx
+        .allowed_users
+        .0
+        .lock()
+        .unwrap()
+        .get(&room_id)
+        .is_none_or(|users| users.contains(&socket_ctx.user_id))
 }
 
 fn sanitize_message(msg: ChatMsg) -> ChatMsg {

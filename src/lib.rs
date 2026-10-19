@@ -99,9 +99,9 @@
 //!
 //! ```
 //! # use leptos::prelude::*;
-//! # use leptos_axum_socket::{ServerSocket, SocketMsg, SocketRoute, handlers::upgrade_websocket};
+//! # use leptos_axum_socket::{ServerSocket, SocketMsg, SocketOptions, SocketRoute, handlers::upgrade_websocket};
 //! # use serde::{Deserialize, Serialize};
-//! # use axum::{Router, extract::{State, WebSocketUpgrade, FromRef}, response::Response};
+//! # use axum::{Router, extract::{State, WebSocketUpgrade, FromRef}, http::HeaderMap, response::Response};
 //! # use leptos_axum::{generate_route_list, LeptosRoutes};
 //! #
 //! # #[derive(Clone, FromRef)]
@@ -143,13 +143,19 @@
 //!     // Construct the Axum app state
 //!     let state = AppState {
 //!         leptos_options: conf.leptos_options,
-//!         server_socket: ServerSocket::new(),
+//!         // Or `ServerSocket::new()` for the defaults
+//!         server_socket: ServerSocket::with_options(
+//!             SocketOptions::default()
+//!                 .allowed_origins(["https://example.com"])
+//!                 .secure_cookie(true),
+//!         ),
 //!     };
 //!
-//!     // Optional: add subscription filters and message mappers
+//!     // Optional: add subscription filters and message mappers.
+//!     // Without a mapper for a message type, clients can't send messages of that type.
 //!     {
-//!         let mut server_socket = state.server_socket.lock().await;
-//!         server_socket.add_subscribe_filter(async |key: MyKey, _ctx: &()| { key.bla == "bla" });
+//!         let mut server_socket = state.server_socket.lock();
+//!         server_socket.add_subscribe_filter(async |key: MyKey, _ctx: ()| { key.bla == "bla" });
 //!         server_socket.add_send_mapper(|key: MyKey, msg: MyMsg, _ctx: &()| {
 //!             if key.bla == "bla" {
 //!                 Some(MyMsg {
@@ -181,6 +187,7 @@
 //! #[cfg(feature = "ssr")]
 //! pub async fn connect_to_websocket(
 //!     ws: WebSocketUpgrade,
+//!     headers: HeaderMap,
 //!     State(socket): State<ServerSocket>,
 //! ) -> Response {
 //!     // You could do authentication here
@@ -188,7 +195,7 @@
 //!     // Provide extra context like the user's ID for example that is passed to the permission filters
 //!     let ctx = ();
 //!
-//!     upgrade_websocket(ws, socket, ctx)
+//!     upgrade_websocket(ws, &headers, socket, ctx)
 //! }
 //! ```
 //!

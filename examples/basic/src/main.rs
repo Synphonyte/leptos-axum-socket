@@ -1,6 +1,7 @@
 #[cfg(feature = "ssr")]
 use axum::{
     extract::{State, WebSocketUpgrade},
+    http::HeaderMap,
     response::Response,
 };
 #[cfg(feature = "ssr")]
@@ -55,9 +56,10 @@ async fn main() {
 #[cfg(feature = "ssr")]
 pub async fn connect_to_websocket(
     ws: WebSocketUpgrade,
+    headers: HeaderMap,
     State(socket): State<ServerSocket>,
 ) -> Response {
-    upgrade_websocket(ws, socket, ())
+    upgrade_websocket(ws, &headers, socket, ())
 }
 
 #[cfg(not(feature = "ssr"))]

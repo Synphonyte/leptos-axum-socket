@@ -1,6 +1,7 @@
 use std::{collections::HashMap, sync::Arc};
 
 use leptos::prelude::*;
+use leptos::reactive::owner::WeakOwner;
 use leptos_use::core::ConnectionReadyState;
 use serde::Serialize;
 use serde_json::Value;
@@ -9,6 +10,17 @@ use crate::{ChannelMsg, SocketMsg};
 
 type SendFn = StoredValue<Arc<dyn Fn(&ChannelMsg) + Send + Sync + 'static>>;
 type SimpleFn = StoredValue<Arc<dyn Fn() + Send + Sync + 'static>>;
+type Handler = Arc<dyn Fn(&Value) + Send + Sync + 'static>;
+
+#[cfg_attr(feature = "ssr", allow(dead_code))]
+struct Subscriber {
+    id: u64,
+    /// The owner that subscribed, so the handler can use `expect_context` and friends. Weak,
+    /// because a strong clone would keep an owner that is disposed by being dropped (a route,
+    /// a `<For>` row) alive, and with it the cleanup that removes this subscriber.
+    owner: Option<WeakOwner>,
+    handler: Handler,
+}
 
 /// The context to be used for sending and subscribing to messages in your component.
 /// You probably don't want to use this directly, but rather use the `expect_socket_context` hook.
@@ -20,11 +32,40 @@ pub struct SocketContext {
     pub(crate) open: SimpleFn,
     pub(crate) close: SimpleFn,
     pub(crate) message: Signal<Option<ChannelMsg>>,
-    effect_stops: StoredValue<HashMap<Value, Box<dyn Fn() + Send + Sync + 'static>>>,
-    subscribers: StoredValue<HashMap<Value, Arc<dyn Fn() + Send + Sync>>>,
+    /// Handlers per key in subscription order. A key is subscribed on the server while it has an entry.
+    subscribers: StoredValue<HashMap<Value, Vec<Subscriber>>>,
+    next_subscription_id: StoredValue<u64>,
 }
 
-// #[cfg(not(feature = "ssr"))]
+/// Returned by [`SocketContext::subscribe`]. Dropping it does nothing: the subscription ends
+/// when the reactive owner that created it is disposed, or when
+/// [`unsubscribe`](SubscriptionHandle::unsubscribe) is called.
+#[derive(Clone)]
+pub struct SubscriptionHandle {
+    #[cfg_attr(feature = "ssr", allow(dead_code))]
+    ctx: SocketContext,
+    key: Value,
+    id: u64,
+}
+
+impl std::fmt::Debug for SubscriptionHandle {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("SubscriptionHandle")
+            .field("key", &self.key)
+            .field("id", &self.id)
+            .finish()
+    }
+}
+
+impl SubscriptionHandle {
+    /// Stop calling this subscription's handler. The key is unsubscribed on the server once no
+    /// other handler for it remains.
+    pub fn unsubscribe(&self) {
+        #[cfg(not(feature = "ssr"))]
+        self.ctx.remove_handler(&self.key, self.id);
+    }
+}
+
 impl SocketContext {
     fn new(query: String) -> Self {
         use crate::WEBSOCKET_CHANNEL_URL;
@@ -56,119 +97,200 @@ impl SocketContext {
                 }),
         );
 
-        Self {
+        let this = Self {
             message,
             send: StoredValue::new(Arc::new(send)),
             ready_state,
             open: StoredValue::new(Arc::new(open)),
             close: StoredValue::new(Arc::new(close)),
-            effect_stops: StoredValue::new(HashMap::new()),
             subscribers: StoredValue::new(HashMap::new()),
+            next_subscription_id: StoredValue::new(0),
+        };
+
+        #[cfg(not(feature = "ssr"))]
+        {
+            // The server forgets all subscriptions when a connection closes.
+            Effect::new(move || {
+                if this.ready_state.get() == ConnectionReadyState::Open {
+                    for key in this.subscribers.read_value().keys() {
+                        this.send_raw(&ChannelMsg::Subscribe { key: key.clone() });
+                    }
+                }
+            });
+
+            // `watch` runs the handlers untracked, so a handler that reads a signal doesn't
+            // re-run when it changes, and `immediate = false` keeps a new subscriber from
+            // receiving the previous message. It also runs them without an owner, which
+            // `dispatch` restores.
+            Effect::watch(
+                move || this.message.track(),
+                move |_, _, _| this.dispatch(),
+                false,
+            );
+        }
+
+        this
+    }
+
+    #[cfg(not(feature = "ssr"))]
+    fn send_raw(&self, msg: &ChannelMsg) {
+        self.send.get_value()(msg);
+    }
+
+    #[cfg(not(feature = "ssr"))]
+    fn dispatch(&self) {
+        let Some(ChannelMsg::Msg { key, msg }) = self.message.get_untracked() else {
+            return;
+        };
+
+        // Handlers may subscribe or unsubscribe, so none runs while the map is borrowed.
+        let subscribers: Vec<(Option<WeakOwner>, Handler)> = self
+            .subscribers
+            .read_value()
+            .get(&key)
+            .map(|subscribers| {
+                subscribers
+                    .iter()
+                    .map(|subscriber| (subscriber.owner.clone(), Arc::clone(&subscriber.handler)))
+                    .collect()
+            })
+            .unwrap_or_default();
+
+        for (owner, handler) in subscribers {
+            match owner {
+                Some(owner) => {
+                    // A disposed owner's cleanup removes its subscriber; nothing to run here.
+                    if let Some(owner) = owner.upgrade() {
+                        owner.with(|| handler(&msg));
+                    }
+                }
+                None => handler(&msg),
+            }
+        }
+    }
+
+    #[cfg(not(feature = "ssr"))]
+    fn remove_handler(&self, key: &Value, id: u64) {
+        let last = {
+            // Gone once the whole app is disposed.
+            let Some(mut subscribers) = self.subscribers.try_write_value() else {
+                return;
+            };
+            let Some(handlers) = subscribers.get_mut(key) else {
+                return;
+            };
+
+            handlers.retain(|subscriber| subscriber.id != id);
+
+            if handlers.is_empty() {
+                subscribers.remove(key);
+                true
+            } else {
+                false
+            }
+        };
+
+        if last {
+            self.send_unsubscribe(key);
+        }
+    }
+
+    #[cfg(not(feature = "ssr"))]
+    fn send_unsubscribe(&self, key: &Value) {
+        if self.ready_state.get_untracked() == ConnectionReadyState::Open {
+            self.send_raw(&ChannelMsg::Unsubscribe { key: key.clone() });
         }
     }
 
     /// Disconnects and re-connects the WebSocket. This helps if you want to reset the context on the server.
     /// For example, you can use this method to update the websocket handler context when the user logs out or in.
+    ///
+    /// Every subscription is re-sent once the new connection is open.
     pub fn reconnect(&self) {
         #[cfg(not(feature = "ssr"))]
         {
-            for (_, stop) in self.effect_stops.write_value().drain() {
-                stop();
-            }
-
             self.close.get_value()();
             self.open.get_value()();
-
-            for (key, subscriber) in &*self.subscribers.read_value() {
-                self.subscribe_effect(key.clone(), Arc::clone(subscriber));
-            }
         }
     }
 
     /// When someone sends a message with the given key, the handler will be called.
-    pub fn subscribe<Msg>(self, key_value: Msg::Key, handler: impl Fn(&Msg) + Send + Sync + 'static)
+    ///
+    /// The subscription ends when the current reactive owner (usually the component) is
+    /// disposed, or when [`SubscriptionHandle::unsubscribe`] is called on the returned handle.
+    /// Dropping the handle does nothing. Several subscribers of one key each receive every
+    /// message; the key is unsubscribed on the server when the last one leaves.
+    pub fn subscribe<Msg>(
+        self,
+        key_value: Msg::Key,
+        handler: impl Fn(&Msg) + Send + Sync + 'static,
+    ) -> SubscriptionHandle
     where
         Msg: SocketMsg + serde::Serialize + Clone,
         for<'de> Msg: serde::Deserialize<'de>,
         Msg::Key: serde::Serialize,
         for<'de> Msg::Key: serde::Deserialize<'de>,
     {
+        let key_value = serde_json::to_value(key_value)
+            .map_err(|err| {
+                leptos::logging::error!("Failed to serialize key: {}", err);
+            })
+            .unwrap();
+
+        let id = self.next_subscription_id.get_value();
+        self.next_subscription_id.set_value(id + 1);
+
+        let handle = SubscriptionHandle {
+            ctx: self,
+            key: key_value,
+            id,
+        };
+
         #[cfg(feature = "ssr")]
         {
-            let _ = key_value;
             let _ = handler;
         }
 
         #[cfg(not(feature = "ssr"))]
         {
-            let key_value = serde_json::to_value(key_value)
-                .map_err(|err| {
-                    leptos::logging::error!("Failed to serialize key: {}", err);
-                })
-                .unwrap();
-
-            let handler = {
-                let key_value = key_value.clone();
-
-                Arc::new(move || {
-                    if let Some(msg) = self.message.read().as_ref() {
-                        match msg {
-                            ChannelMsg::Msg { msg, key } if &key_value == key => {
-                                match serde_json::from_value(msg.clone()) {
-                                    Err(err) => {
-                                        leptos::logging::error!(
-                                            "Failed to deserialize message: {}",
-                                            err
-                                        );
-                                    }
-                                    Ok(msg) => {
-                                        handler(&msg);
-                                    }
-                                }
-                            }
-                            _ => (),
+            let handler: Handler =
+                Arc::new(
+                    move |msg: &Value| match <Msg as serde::Deserialize>::deserialize(msg) {
+                        Ok(msg) => handler(&msg),
+                        Err(err) => {
+                            leptos::logging::error!("Failed to deserialize message: {}", err);
                         }
-                    }
-                }) as Arc<dyn Fn() + Send + Sync>
+                    },
+                );
+
+            let first = {
+                let mut subscribers = self.subscribers.write_value();
+                let handlers = subscribers.entry(handle.key.clone()).or_default();
+                handlers.push(Subscriber {
+                    id,
+                    owner: Owner::current().map(|owner| owner.downgrade()),
+                    handler,
+                });
+                handlers.len() == 1
             };
 
-            self.subscribers
-                .write_value()
-                .insert(key_value.clone(), Arc::clone(&handler));
-            self.subscribe_effect(key_value, handler);
+            if first && self.ready_state.get_untracked() == ConnectionReadyState::Open {
+                self.send_raw(&ChannelMsg::Subscribe {
+                    key: handle.key.clone(),
+                });
+            }
+
+            on_cleanup({
+                let handle = handle.clone();
+
+                move || handle.unsubscribe()
+            });
         }
+
+        handle
     }
 
-    #[cfg(not(feature = "ssr"))]
-    fn subscribe_effect(self, key_value: Value, handler: Arc<dyn Fn() + Send + Sync>) {
-        Effect::new({
-            let key_value = key_value.clone();
-
-            move || {
-                if self.ready_state.get() == ConnectionReadyState::Open {
-                    self.send.get_value()(&ChannelMsg::Subscribe {
-                        key: key_value.clone(),
-                    });
-                }
-            }
-        });
-
-        on_cleanup({
-            let key_value = key_value.clone();
-
-            move || {
-                self.unsubscribe(key_value);
-            }
-        });
-
-        let effect = Effect::new(move || handler());
-
-        self.effect_stops
-            .write_value()
-            .insert(key_value, Box::new(move || effect.stop()));
-    }
-
-    /// Stop listening for messages with the given key.
+    /// Stop listening for messages with the given key, for every subscriber of it.
     pub fn unsubscribe<Key>(self, key: Key)
     where
         Key: serde::Serialize,
@@ -186,14 +308,16 @@ impl SocketContext {
                 })
                 .unwrap();
 
-            self.effect_stops.write_value().remove(&key_value);
-            self.subscribers.write_value().remove(&key_value);
-
-            self.send.get_value()(&ChannelMsg::Unsubscribe { key: key_value });
+            if self.subscribers.write_value().remove(&key_value).is_some() {
+                self.send_unsubscribe(&key_value);
+            }
         }
     }
 
     /// Broadcast a message to all subscribers of the given key.
+    ///
+    /// The server only forwards it if a send mapper for the message type accepts it. See
+    /// `ServerSocketInner::add_send_mapper`.
     pub fn send<Msg>(self, key: Msg::Key, msg: Msg)
     where
         Msg: SocketMsg + serde::Serialize + Clone,
@@ -221,7 +345,7 @@ impl SocketContext {
                 })
                 .unwrap();
 
-            self.send.get_value()(&ChannelMsg::Msg {
+            self.send_raw(&ChannelMsg::Msg {
                 msg: msg_value,
                 key: key_value,
             });

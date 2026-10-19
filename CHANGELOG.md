@@ -1,5 +1,34 @@
 # Changelog
 
+## [0.8.0] - unreleased
+
+### Breaking Changes
+- requires `leptos` `0.8.19` or newer
+- `ServerSocket::lock()` is now synchronous
+- `upgrade_websocket()` takes the request's `HeaderMap` as second argument for the `Origin` check
+- messages from the browser are only broadcast if a send mapper accepts them
+- `SocketContext::subscribe()` returns a `SubscriptionHandle` and a key can have several subscribers
+- `ServerSocketInner::send_to_self()` is no longer `async`
+- subscribe filters and send mappers with the wrong context type deny instead of panicking
+
+### Added
+- `SocketOptions` and `ServerSocket::with_options()` for size limits, allowed origins, ping interval, timeouts and a secure client id cookie
+- server pings clients and closes unresponsive connections
+
+### Fixes
+- malformed messages are dropped instead of panicking the connection
+- disconnects no longer leak tasks or connections
+- re-subscribing a key no longer spawns a duplicate task or bypasses the subscription limit
+- lagging subscribers keep their subscription
+- mailboxes without subscribers are removed
+- send mappers run without the socket lock
+- broadcast messages are serialized only once
+- tracing spans no longer record socket state, payloads or headers
+- `SocketContext::reconnect()` keeps subscriptions with the components that made them
+- client handlers run untracked and new subscribers no longer receive the previous message
+- client id cookie is parsed with the `cookie` crate
+- docs.rs builds with the `ssr` feature
+
 ## [0.7.0] - 2026-07-04
 
 ### Breaking Change

@@ -46,7 +46,7 @@ async fn main() {
     };
 
     {
-        let mut server_socket = state.server_socket.lock().await;
+        let mut server_socket = state.server_socket.lock();
 
         server_socket.add_subscribe_filter(is_authenticated);
         server_socket.add_send_mapper(sanitize_authenticated);
