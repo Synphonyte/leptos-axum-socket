@@ -13,7 +13,7 @@ async fn main() {
     };
     use leptos::prelude::*;
     use leptos_axum::{LeptosRoutes, generate_route_list};
-    use leptos_axum_socket::{ServerSocket, SocketRoute};
+    use leptos_axum_socket::{ServerSocket, SocketOptions, SocketRoute};
     use tracing_subscriber::EnvFilter;
 
     use crate::socket_handlers::{connect_to_websocket, is_authenticated, sanitize_authenticated};
@@ -41,7 +41,9 @@ async fn main() {
 
     let state = AppState {
         leptos_options: conf.leptos_options,
-        server_socket: ServerSocket::new(),
+        // Served over plain HTTP, where Chrome and Safari drop the secure client id cookie,
+        // even on localhost. Without it, `send_to_self` reaches no one.
+        server_socket: ServerSocket::with_options(SocketOptions::default().secure_cookie(false)),
         allowed_users,
     };
 

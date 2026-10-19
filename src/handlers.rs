@@ -13,7 +13,7 @@ use cookie::{Cookie, SameSite};
 use futures_util::{SinkExt, StreamExt, stream::SplitSink};
 use serde_json::Value;
 use tokio::{
-    sync::{Mutex, broadcast, mpsc},
+    sync::{Mutex, broadcast},
     task::JoinHandle,
     time::{error::Elapsed, timeout},
 };
@@ -21,18 +21,18 @@ use tokio_util::sync::CancellationToken;
 use tracing::{debug, trace, warn};
 use uuid::Uuid;
 
-use crate::{ChannelMsg, ServerSocket, SocketOptions, channel::cookie_name};
-
-/// Messages queued for a client by `send_to_self` while its socket is busy.
-const CLIENT_QUEUE_SIZE: usize = 16;
+use crate::{
+    ChannelMsg, ServerSocket, SocketOptions,
+    channel::{client_id_from_headers, cookie_name},
+};
 
 type WsSink = Arc<Mutex<SplitSink<WebSocket, Message>>>;
 
-/// One client's connection. Dropping it removes the client from the socket and stops every
-/// task spawned for it, so no exit path, a panic included, can leak them.
+/// One of a client's connections. Dropping it stops every task spawned for it, which removes
+/// its receivers from the socket, so no exit path, a panic included, can leak them.
 struct Connection {
     socket: ServerSocket,
-    client_id: Uuid,
+    connection_id: Uuid,
     ws_tx: WsSink,
     options: SocketOptions,
     cancel: CancellationToken,
@@ -48,7 +48,7 @@ impl Connection {
         let msg: ChannelMsg = match serde_json::from_str(text) {
             Ok(msg) => msg,
             Err(err) => {
-                debug!(client_id = %self.client_id, %err, "Ignoring malformed message");
+                debug!(connection_id = %self.connection_id, %err, "Ignoring malformed message");
                 return;
             }
         };
@@ -61,23 +61,23 @@ impl Connection {
 
                 // The key stays in memory for as long as the subscription lasts.
                 if text.len() > self.options.max_key_size {
-                    debug!(client_id = %self.client_id, "Subscription key too large");
+                    debug!(connection_id = %self.connection_id, "Subscription key too large");
                     return;
                 }
 
                 if self.subscriptions.len() >= self.options.max_subscriptions {
-                    debug!(client_id = %self.client_id, "Subscription limit reached");
+                    debug!(connection_id = %self.connection_id, "Subscription limit reached");
                     return;
                 }
 
                 if !self.socket.can_subscribe(&key, context).await {
-                    debug!(client_id = %self.client_id, "Subscription denied");
+                    debug!(connection_id = %self.connection_id, "Subscription denied");
                     return;
                 }
 
                 // The connection, the mailbox and its receiver share one copy of the key.
                 let key = Arc::new(key);
-                let mailbox = MailboxReceiver::new(&self.socket, Arc::clone(&key));
+                let mailbox = ChannelReceiver::mailbox(&self.socket, Arc::clone(&key));
 
                 let handle = tokio::spawn(forward_broadcast(
                     Arc::clone(&self.ws_tx),
@@ -104,29 +104,42 @@ impl Connection {
 
 impl Drop for Connection {
     fn drop(&mut self) {
-        self.socket.lock().remove_client_sender(self.client_id);
-
         for handle in self.subscriptions.values().chain(&self.tasks) {
             handle.abort();
         }
     }
 }
 
-/// A subscription's end of its mailbox. Dropping it, which is what aborting the forwarding
-/// task does, removes the mailbox once no subscriber is left.
-struct MailboxReceiver {
+enum Channel {
+    Mailbox(Arc<Value>),
+    Client(Uuid),
+}
+
+/// A connection's end of a mailbox or of its client's channel. Dropping it, which is what
+/// aborting the forwarding task does, removes the channel once no receiver is left.
+struct ChannelReceiver {
     socket: ServerSocket,
-    key: Arc<Value>,
+    channel: Channel,
     receiver: Option<broadcast::Receiver<Utf8Bytes>>,
 }
 
-impl MailboxReceiver {
-    fn new(socket: &ServerSocket, key: Arc<Value>) -> Self {
+impl ChannelReceiver {
+    fn mailbox(socket: &ServerSocket, key: Arc<Value>) -> Self {
         let receiver = socket.lock().subscribe(Arc::clone(&key));
 
         Self {
             socket: socket.clone(),
-            key,
+            channel: Channel::Mailbox(key),
+            receiver: Some(receiver),
+        }
+    }
+
+    fn client(socket: &ServerSocket, client_id: Uuid) -> Self {
+        let receiver = socket.lock().subscribe_client(client_id);
+
+        Self {
+            socket: socket.clone(),
+            channel: Channel::Client(client_id),
             receiver: Some(receiver),
         }
     }
@@ -140,12 +153,17 @@ impl MailboxReceiver {
     }
 }
 
-impl Drop for MailboxReceiver {
+impl Drop for ChannelReceiver {
     fn drop(&mut self) {
         // The receiver count has to go down before the check.
         drop(self.receiver.take());
 
-        self.socket.lock().remove_mailbox_if_unused(&self.key);
+        let mut socket = self.socket.lock();
+
+        match &self.channel {
+            Channel::Mailbox(key) => socket.remove_mailbox_if_unused(key),
+            Channel::Client(client_id) => socket.remove_client_if_unused(*client_id),
+        }
     }
 }
 
@@ -163,12 +181,9 @@ async fn handle_websocket_with_context<C>(
 
     let cancel = CancellationToken::new();
 
-    let (client_tx, client_rx) = mpsc::channel(CLIENT_QUEUE_SIZE);
-    socket.lock().insert_client_sender(client_id, client_tx);
-
     let mut conn = Connection {
         socket,
-        client_id,
+        connection_id: Uuid::new_v4(),
         ws_tx: Arc::clone(&ws_tx),
         cancel: cancel.clone(),
         subscriptions: HashMap::new(),
@@ -176,9 +191,11 @@ async fn handle_websocket_with_context<C>(
         options,
     };
 
-    conn.tasks.push(tokio::spawn(forward_client_queue(
+    let connection_id = conn.connection_id;
+
+    conn.tasks.push(tokio::spawn(forward_broadcast(
         Arc::clone(&ws_tx),
-        client_rx,
+        ChannelReceiver::client(&conn.socket, client_id),
         conn.options.write_timeout,
         cancel.clone(),
     )));
@@ -201,12 +218,12 @@ async fn handle_websocket_with_context<C>(
             next = maybe_timeout(read_timeout, ws_rx.next()) => match next {
                 Ok(Some(Ok(msg))) => msg,
                 Ok(Some(Err(err))) => {
-                    debug!(%client_id, %err, "WebSocket read failed, closing");
+                    debug!(%connection_id, %err, "WebSocket read failed, closing");
                     break;
                 }
                 Ok(None) => break,
                 Err(_) => {
-                    debug!(%client_id, "Nothing received within the read timeout, closing");
+                    debug!(%connection_id, "Nothing received within the read timeout, closing");
                     break;
                 }
             },
@@ -255,28 +272,14 @@ async fn write_message(ws_tx: &WsSink, msg: Message, write_timeout: Option<Durat
     }
 }
 
-async fn forward_client_queue(
-    ws_tx: WsSink,
-    mut client_rx: mpsc::Receiver<Utf8Bytes>,
-    write_timeout: Option<Duration>,
-    cancel: CancellationToken,
-) {
-    while let Some(frame) = client_rx.recv().await {
-        if !write_message(&ws_tx, Message::Text(frame), write_timeout).await {
-            cancel.cancel();
-            return;
-        }
-    }
-}
-
 async fn forward_broadcast(
     ws_tx: WsSink,
-    mut mailbox: MailboxReceiver,
+    mut receiver: ChannelReceiver,
     write_timeout: Option<Duration>,
     cancel: CancellationToken,
 ) {
     loop {
-        match mailbox.recv().await {
+        match receiver.recv().await {
             Ok(frame) => {
                 if !write_message(&ws_tx, Message::Text(frame), write_timeout).await {
                     cancel.cancel();
@@ -330,6 +333,13 @@ fn origin_allowed(headers: &HeaderMap, options: &SocketOptions) -> bool {
     })
 }
 
+fn page_served_over_http(headers: &HeaderMap) -> bool {
+    headers
+        .get(header::ORIGIN)
+        .and_then(|origin| origin.to_str().ok())
+        .is_some_and(|origin| origin.starts_with("http://"))
+}
+
 /// This is used to handle the incoming WebSocket connection.
 ///
 /// Applies the [`SocketOptions`](crate::SocketOptions) of the `socket`: the request is answered
@@ -373,14 +383,28 @@ where
         return StatusCode::FORBIDDEN.into_response();
     }
 
-    let client_id = Uuid::new_v4();
+    // One id per browser, shared by all its tabs, so `send_to_self` reaches every one of them.
+    let (client_id, new_cookie) = match client_id_from_headers(headers, options.secure_cookie) {
+        Ok(client_id) => (client_id, None),
+        Err(_) => {
+            if options.secure_cookie && page_served_over_http(headers) {
+                warn!(
+                    "Most browsers drop the secure client id cookie on plain HTTP, so `send_to_self` won't reach this browser. Turn off `SocketOptions::secure_cookie` when serving without HTTPS."
+                );
+            }
 
-    let cookie = Cookie::build((cookie_name(options.secure_cookie), client_id.to_string()))
-        .path("/")
-        .http_only(true)
-        .secure(options.secure_cookie)
-        .same_site(SameSite::Strict)
-        .build();
+            let client_id = Uuid::new_v4();
+
+            let cookie = Cookie::build((cookie_name(options.secure_cookie), client_id.to_string()))
+                .path("/")
+                .http_only(true)
+                .secure(options.secure_cookie)
+                .same_site(SameSite::Strict)
+                .build();
+
+            (client_id, Some(cookie))
+        }
+    };
 
     let mut response = ws
         .max_message_size(options.max_message_size)
@@ -389,10 +413,12 @@ where
             handle_websocket_with_context(websocket, socket, client_id, context, options)
         });
 
-    response.headers_mut().insert(
-        header::SET_COOKIE,
-        HeaderValue::from_str(&cookie.to_string()).expect("cookie is ASCII"),
-    );
+    if let Some(cookie) = new_cookie {
+        response.headers_mut().insert(
+            header::SET_COOKIE,
+            HeaderValue::from_str(&cookie.to_string()).expect("cookie is ASCII"),
+        );
+    }
 
     response
 }

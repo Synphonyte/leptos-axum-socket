@@ -10,6 +10,8 @@
 - `SocketContext::subscribe()` returns a `SubscriptionHandle` and a key can have several subscribers
 - `ServerSocketInner::send_to_self()` is no longer `async`
 - subscribe filters and send mappers with the wrong context type deny instead of panicking
+- `send_to_self()` reaches every tab of the calling browser
+- the client id cookie is `Secure` and `__Host-` prefixed by default
 
 ### Added
 - `SocketOptions` and `ServerSocket::with_options()` for size limits, allowed origins, ping interval, timeouts and a secure client id cookie

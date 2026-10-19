@@ -9,7 +9,7 @@ mod server;
 pub use context::*;
 use serde_json::Value;
 #[cfg(feature = "ssr")]
-pub(crate) use server::cookie_name;
+pub(crate) use server::{client_id_from_headers, cookie_name};
 #[cfg(feature = "ssr")]
 pub use server::{ServerSocket, ServerSocketInner, SocketOptions, send, send_to_self};
 

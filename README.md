@@ -110,8 +110,7 @@ async fn main() {
         // Or `ServerSocket::new()` for the defaults
         server_socket: ServerSocket::with_options(
             SocketOptions::default()
-                .allowed_origins(["https://example.com"])
-                .secure_cookie(true),
+                .allowed_origins(["https://example.com"]),
         ),
     };
 

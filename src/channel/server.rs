@@ -14,14 +14,16 @@ use leptos::prelude::*;
 use leptos_use::utils::header;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
-use tokio::sync::{broadcast, mpsc};
-use tracing::{debug, error, instrument, warn};
+use tokio::sync::broadcast;
+use tracing::{debug, error, instrument};
 use uuid::Uuid;
 
 use crate::{ChannelMsg, SocketMsg};
 
 /// Messages a mailbox buffers for a subscriber that is slower than the sender.
 const MAILBOX_CAPACITY: usize = 16;
+/// Messages a client's channel buffers for a connection that is slower than the sender.
+const CLIENT_CHANNEL_CAPACITY: usize = 16;
 
 /// Settings for the WebSocket connections. Pass them to [`ServerSocket::with_options`].
 ///
@@ -30,7 +32,6 @@ const MAILBOX_CAPACITY: usize = 16;
 /// # use leptos_axum_socket::SocketOptions;
 /// let options = SocketOptions::default()
 ///     .allowed_origins(["https://example.com"])
-///     .secure_cookie(true)
 ///     .ping_interval(Duration::from_secs(15));
 /// ```
 #[derive(Clone, Debug)]
@@ -55,7 +56,7 @@ impl Default for SocketOptions {
             ping_interval: Some(Duration::from_secs(30)),
             read_timeout: Some(Duration::from_secs(90)),
             write_timeout: Some(Duration::from_secs(30)),
-            secure_cookie: false,
+            secure_cookie: true,
         }
     }
 }
@@ -134,7 +135,11 @@ impl SocketOptions {
     }
 
     /// Set the client id cookie as `__Host-socket_client_id` with the `Secure` attribute, so
-    /// that no other host or subdomain can set it. Requires HTTPS. Off by default.
+    /// that no other host or subdomain can set it and it's never sent over plain HTTP.
+    /// On by default.
+    ///
+    /// Most browsers drop such a cookie on plain HTTP, even on `http://localhost`, and
+    /// `send_to_self` then reaches no one. Turn it off when serving without HTTPS.
     pub fn secure_cookie(self, secure: bool) -> Self {
         Self {
             secure_cookie: secure,
@@ -227,7 +232,8 @@ type SendMapFn = Arc<dyn Fn(&Value, &Value, &dyn Any) -> Option<Option<Value>> +
 pub struct ServerSocketInner {
     options: SocketOptions,
     sender_map: HashMap<Arc<Value>, broadcast::Sender<Utf8Bytes>>,
-    client_to_sender: HashMap<Uuid, mpsc::Sender<Utf8Bytes>>,
+    /// One channel per client (browser) that each of its connections (tabs) receives from.
+    client_to_sender: HashMap<Uuid, broadcast::Sender<Utf8Bytes>>,
     subscribe_filters: Vec<SubscribeFilterFn>,
     send_mappers: Vec<SendMapFn>,
 }
@@ -296,12 +302,13 @@ impl ServerSocketInner {
         self.send_serialized(key, msg);
     }
 
-    /// Send a message from the server only to the connection whose client id cookie is in `headers`.
+    /// Send a message from the server to every tab of the browser whose client id cookie is in
+    /// `headers`, and to no one else.
     ///
     /// This is used to send messages from an axum handler.
     /// If you want to send from a server function, use the module level [`send_to_self`] function.
     ///
-    /// The message is dropped when that client isn't reading its messages.
+    /// A tab that falls behind loses its oldest messages.
     ///
     /// ## Example
     ///
@@ -362,35 +369,34 @@ impl ServerSocketInner {
         }
     }
 
-    #[instrument(level = "debug", skip_all, fields(client_id = %client_id))]
+    #[instrument(level = "debug", skip_all)]
     pub(crate) fn send_serialized_to_self(&self, client_id: Uuid, key: Value, msg: Value) {
         let Some(sender) = self.client_to_sender.get(&client_id) else {
-            error!("WebSocket transmitter for client ID {client_id} not found");
+            error!("WebSocket transmitter for this client not found");
             return;
         };
 
-        // Awaiting a full queue would hold the lock for as long as the client doesn't read.
-        match sender.try_send(encode(&ChannelMsg::Msg { key, msg })) {
-            Ok(()) => {}
-            Err(mpsc::error::TrySendError::Full(_)) => {
-                warn!("Client isn't reading its messages, dropping one");
-            }
-            Err(mpsc::error::TrySendError::Closed(_)) => {
-                debug!("Client disconnected, dropping message");
-            }
+        if sender.send(encode(&ChannelMsg::Msg { key, msg })).is_err() {
+            debug!("Client disconnected, dropping message");
         }
     }
 
-    pub(crate) fn insert_client_sender(
-        &mut self,
-        client_id: Uuid,
-        sender: mpsc::Sender<Utf8Bytes>,
-    ) {
-        self.client_to_sender.insert(client_id, sender);
+    pub(crate) fn subscribe_client(&mut self, client_id: Uuid) -> broadcast::Receiver<Utf8Bytes> {
+        self.client_to_sender
+            .entry(client_id)
+            .or_insert_with(|| broadcast::Sender::new(CLIENT_CHANNEL_CAPACITY))
+            .subscribe()
     }
 
-    pub(crate) fn remove_client_sender(&mut self, client_id: Uuid) {
-        self.client_to_sender.remove(&client_id);
+    /// Call after a connection dropped its receiver.
+    pub(crate) fn remove_client_if_unused(&mut self, client_id: Uuid) {
+        if self
+            .client_to_sender
+            .get(&client_id)
+            .is_some_and(|sender| sender.receiver_count() == 0)
+        {
+            self.client_to_sender.remove(&client_id);
+        }
     }
 
     pub(crate) fn subscribe(&mut self, key: Arc<Value>) -> broadcast::Receiver<Utf8Bytes> {
@@ -550,12 +556,12 @@ where
     ServerSocket::from_ref(&state).lock().send(key, msg);
 }
 
-/// Send a message from a server function only to the connection that called this server function.
+/// Send a message from a server function to every tab of the calling browser, and to no one else.
 ///
 /// You can call this function only from a server function.
 /// If you want to call this from an axum handler use [`ServerSocketInner::send_to_self`] instead.
 ///
-/// The message is dropped when that client isn't reading its messages.
+/// A tab that falls behind loses its oldest messages.
 #[instrument(level = "debug", skip_all)]
 pub async fn send_to_self<Msg>(key: &Msg::Key, msg: &Msg)
 where
@@ -611,7 +617,7 @@ fn extract_client_id_server_fn(secure: bool) -> Result<Uuid, String> {
     read_client_id_from_cookie_header(&cookie_header, secure)
 }
 
-fn client_id_from_headers(headers: &HeaderMap, secure: bool) -> Result<Uuid, String> {
+pub(crate) fn client_id_from_headers(headers: &HeaderMap, secure: bool) -> Result<Uuid, String> {
     let cookie_header = headers.get(COOKIE).ok_or("No cookie header found")?;
     let cookie_header = cookie_header
         .to_str()
