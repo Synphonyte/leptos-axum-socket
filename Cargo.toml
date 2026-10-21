@@ -21,8 +21,9 @@ anyhow = "1"
 axum = { version = "0.8", optional = true, features = ["macros", "ws"] }
 cookie = { version = "0.18", optional = true }
 futures-util = { version = "0.3", optional = true }
-leptos = { version = "0.8" }
-leptos-use = { version = "0.19", default-features = false, features = [
+leptos = { version = "0.8.19" }
+leptos-use-websocket = "0.20"
+leptos-use = { version = "0.20", default-features = false, features = [
     "use_websocket",
 ] }
 leptos_axum = { version = "0.8", optional = true }
@@ -50,5 +51,6 @@ ssr = [
     "dep:tokio-util",
     "leptos-use/axum",
     "leptos-use/ssr",
+    "leptos-use-websocket/ssr",
     "leptos/ssr",
 ]

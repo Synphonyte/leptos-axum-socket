@@ -70,7 +70,7 @@ impl SocketContext {
     fn new(query: String) -> Self {
         use crate::WEBSOCKET_CHANNEL_URL;
         use leptos::server::codee::string::JsonSerdeCodec;
-        use leptos_use::{
+        use leptos_use_websocket::{
             ReconnectLimit, UseWebSocketOptions, UseWebSocketReturn, use_websocket_with_options,
         };
 
