@@ -22,9 +22,8 @@ axum = { version = "0.8", optional = true, features = ["macros", "ws"] }
 cookie = { version = "0.18", optional = true }
 futures-util = { version = "0.3", optional = true }
 leptos = { version = "0.8.19" }
-leptos-use-core = "0.20"
 leptos-use-header = { version = "0.20", optional = true, features = ["axum"] }
-leptos-use-websocket = "0.20"
+leptos-use-websocket = "0.20.1"
 leptos_axum = { version = "0.8", optional = true }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
@@ -57,7 +56,6 @@ ssr = [
     "dep:leptos-use-header",
     "dep:tokio",
     "dep:tokio-util",
-    "leptos-use-core/ssr",
     "leptos-use-header/ssr",
     "leptos-use-websocket/ssr",
     "leptos/ssr",

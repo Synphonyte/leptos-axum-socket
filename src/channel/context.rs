@@ -2,7 +2,7 @@ use std::{collections::HashMap, sync::Arc};
 
 use leptos::prelude::*;
 use leptos::reactive::owner::WeakOwner;
-use leptos_use_core::{ConnectionReadyState, ReconnectLimit};
+use leptos_use_websocket::{ConnectionReadyState, ReconnectLimit};
 use serde::Serialize;
 use serde_json::Value;
 

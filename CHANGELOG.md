@@ -4,8 +4,8 @@
 
 ### Breaking Changes
 - requires `leptos` `0.8.19` or newer
-- requires the `leptos-use` `0.20` micro-crates (`leptos-use-core`, `leptos-use-websocket`, `leptos-use-header`)
-- `SocketContext::ready_state` is now a `Signal<ConnectionReadyState>` from `leptos-use-core`
+- requires the `leptos-use` `0.20` micro-crates (`leptos-use-websocket`, `leptos-use-header`)
+- `SocketContext::ready_state` is now a `Signal<ConnectionReadyState>`
 - `ServerSocket::lock()` is now synchronous
 - `upgrade_websocket()` takes the request's `HeaderMap` as second argument for the `Origin` check
 - messages from the browser are only broadcast if a send mapper accepts them
