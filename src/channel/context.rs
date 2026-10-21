@@ -2,7 +2,7 @@ use std::{collections::HashMap, sync::Arc};
 
 use leptos::prelude::*;
 use leptos::reactive::owner::WeakOwner;
-use leptos_use::core::ConnectionReadyState;
+use leptos_use_core::{ConnectionReadyState, ReconnectLimit};
 use serde::Serialize;
 use serde_json::Value;
 
@@ -71,7 +71,7 @@ impl SocketContext {
         use crate::WEBSOCKET_CHANNEL_URL;
         use leptos::server::codee::string::JsonSerdeCodec;
         use leptos_use_websocket::{
-            ReconnectLimit, UseWebSocketOptions, UseWebSocketReturn, use_websocket_with_options,
+            UseWebSocketOptions, UseWebSocketReturn, use_websocket_with_options,
         };
 
         let query = if query.is_empty() {

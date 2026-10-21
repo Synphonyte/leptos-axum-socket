@@ -22,10 +22,9 @@ axum = { version = "0.8", optional = true, features = ["macros", "ws"] }
 cookie = { version = "0.18", optional = true }
 futures-util = { version = "0.3", optional = true }
 leptos = { version = "0.8.19" }
+leptos-use-core = "0.20"
+leptos-use-header = { version = "0.20", optional = true, features = ["axum"] }
 leptos-use-websocket = "0.20"
-leptos-use = { version = "0.20", default-features = false, features = [
-    "use_websocket",
-] }
 leptos_axum = { version = "0.8", optional = true }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
@@ -40,6 +39,14 @@ tokio-util = { version = "0.7", optional = true }
 tracing = "0.1"
 uuid = { version = "1", features = ["serde", "v4"] }
 
+# The doc tests are written against the server-side API, so they only compile
+# with the `ssr` feature. Features requested by dev-dependencies are enabled for
+# test builds only, which is what lets plain `cargo test` and
+# `cargo clippy --tests` work without passing `--features ssr` explicitly while
+# leaving normal builds and downstream users of this crate untouched.
+[dev-dependencies]
+leptos-axum-socket = { path = ".", features = ["ssr"] }
+
 [features]
 hydrate = ["leptos/hydrate", "uuid/js"]
 ssr = [
@@ -47,10 +54,11 @@ ssr = [
     "dep:cookie",
     "dep:futures-util",
     "dep:leptos_axum",
+    "dep:leptos-use-header",
     "dep:tokio",
     "dep:tokio-util",
-    "leptos-use/axum",
-    "leptos-use/ssr",
+    "leptos-use-core/ssr",
+    "leptos-use-header/ssr",
     "leptos-use-websocket/ssr",
     "leptos/ssr",
 ]

@@ -11,7 +11,7 @@ use axum::http::HeaderMap;
 use axum::http::header::COOKIE;
 use cookie::Cookie;
 use leptos::prelude::*;
-use leptos_use::utils::header;
+use leptos_use_header::header;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use tokio::sync::broadcast;
