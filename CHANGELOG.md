@@ -1,6 +1,6 @@
 # Changelog
 
-## [0.8.0] - unreleased
+## [0.8.0] - 2026-10-22
 
 ### Breaking Changes
 - requires `leptos` `0.8.19` or newer
